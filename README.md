@@ -81,6 +81,25 @@ Each release ships ready-to-download artifacts for Windows and Linux.
 - Linux binary and tar.gz package
 - Integrity and signature files for verification
 
+## v2.1 Upgrades
+
+- Audit trail for bed operations: who changed which bed, when, and before/after values.
+- Logical anti-conflict lock for bed assignment to prevent concurrent double assignment.
+- Strong configurable password policy:
+  - `PASSWORD_MIN_LENGTH`
+  - `PASSWORD_REQUIRE_UPPER`
+  - `PASSWORD_REQUIRE_LOWER`
+  - `PASSWORD_REQUIRE_DIGIT`
+  - `PASSWORD_REQUIRE_SYMBOL`
+  - `PASSWORD_MAX_AGE_DAYS`
+  - `AUTH_MAX_ATTEMPTS`
+  - `AUTH_LOCK_MINUTES`
+- One-click SQLite backup and restore (admin): timestamped backup files and latest restore.
+- Frontend performance improvements:
+  - explicit bed config save button instead of API calls on each keystroke
+  - local cache for beds/patients/stats to reduce flash on reload
+  - SSE switched to event-based updates (`state.snapshot`, `bed.updated`, `patient.archived`, etc.)
+
 ## Deployment Positioning
 
 BedBoard is intentionally local-first for private hospital environments.

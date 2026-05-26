@@ -7,14 +7,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/glebarez/sqlite"
 	"golang.org/x/crypto/bcrypt"
@@ -28,6 +33,7 @@ const (
 	defaultPort       = ":8080"
 	dbFileName        = "bedboard.db"
 	legacyConfigFile  = "config_salle.json"
+	backupDirName     = "backups"
 	sessionCookieName = "bedboard_session"
 	sessionDuration   = 7 * 24 * time.Hour
 	defaultUsername   = "admin"
@@ -68,11 +74,25 @@ type Patient struct {
 }
 
 type AdminUser struct {
-	ID           uint      `gorm:"primaryKey" json:"-"`
-	Username     string    `gorm:"uniqueIndex;not null" json:"username"`
-	PasswordHash string    `json:"-"`
-	CreatedAt    time.Time `json:"-"`
-	UpdatedAt    time.Time `json:"-"`
+	ID                uint       `gorm:"primaryKey" json:"-"`
+	Username          string     `gorm:"uniqueIndex;not null" json:"username"`
+	PasswordHash      string     `json:"-"`
+	PasswordChangedAt *time.Time `json:"-"`
+	FailedAttempts    int        `json:"-"`
+	LockedUntil       *time.Time `json:"-"`
+	CreatedAt         time.Time  `json:"-"`
+	UpdatedAt         time.Time  `json:"-"`
+}
+
+type AuditLog struct {
+	ID        uint      `gorm:"primaryKey" json:"-"`
+	Username  string    `json:"username"`
+	Entity    string    `json:"entity"`
+	EntityKey string    `json:"entityKey"`
+	Action    string    `json:"action"`
+	OldValue  string    `json:"oldValue"`
+	NewValue  string    `json:"newValue"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 type Session struct {
@@ -97,9 +117,12 @@ type legacyConfig struct {
 }
 
 type App struct {
-	db        *gorm.DB
-	clientsMu sync.Mutex
-	clients   map[chan string]struct{}
+	db            *gorm.DB
+	clientsMu     sync.Mutex
+	clients       map[chan string]struct{}
+	bedLocksMu    sync.Mutex
+	bedLocks      map[int]*sync.Mutex
+	maintenanceMu sync.Mutex
 }
 
 type authRequest struct {
@@ -116,6 +139,10 @@ type passwordChangeRequest struct {
 	Username        string `json:"username"`
 	CurrentPassword string `json:"currentPassword"`
 	NewPassword     string `json:"newPassword"`
+}
+
+type restoreRequest struct {
+	File string `json:"file"`
 }
 
 type userView struct {
@@ -187,7 +214,7 @@ type statsView struct {
 }
 
 func main() {
-	app := &App{clients: make(map[chan string]struct{})}
+	app := &App{clients: make(map[chan string]struct{}), bedLocks: make(map[int]*sync.Mutex)}
 	if err := app.initDatabase(); err != nil {
 		log.Fatalf("init database: %v", err)
 	}
@@ -222,9 +249,13 @@ func main() {
 	mux.HandleFunc("/api/me", app.withCORS(app.handleMe))
 	mux.HandleFunc("/api/auth", app.withCORS(app.handleAuth))
 	mux.HandleFunc("/api/logout", app.withCORS(app.handleLogout))
+	mux.HandleFunc("/api/state", app.withCORS(app.handleState))
 	mux.HandleFunc("/api/stream", app.withCORS(app.handleStream))
 	mux.HandleFunc("/api/users", app.withCORS(app.requireAuth(app.requireAdmin(app.handleUsers))))
 	mux.HandleFunc("/api/users/password", app.withCORS(app.requireAuth(app.handleUserPassword)))
+	mux.HandleFunc("/api/audit", app.withCORS(app.requireAuth(app.requireAdmin(app.handleAudit))))
+	mux.HandleFunc("/api/admin/backup", app.withCORS(app.requireAuth(app.requireAdmin(app.handleBackup))))
+	mux.HandleFunc("/api/admin/restore", app.withCORS(app.requireAuth(app.requireAdmin(app.handleRestore))))
 	mux.HandleFunc("/api/status", app.withCORS(app.requireAuth(app.handleStatus)))
 	mux.HandleFunc("/api/config-bed", app.withCORS(app.requireAuth(app.handleConfigBed)))
 	mux.HandleFunc("/api/beds", app.withCORS(app.requireAuth(app.handleBedsCreate)))
@@ -259,7 +290,7 @@ func (a *App) initDatabase() error {
 		return err
 	}
 	sqlDB.SetMaxOpenConns(1)
-	if err := db.AutoMigrate(&Bed{}, &Patient{}, &AdminUser{}, &Session{}); err != nil {
+	if err := db.AutoMigrate(&Bed{}, &Patient{}, &AdminUser{}, &Session{}, &AuditLog{}); err != nil {
 		return err
 	}
 	a.db = db
@@ -281,7 +312,8 @@ func (a *App) bootstrapData() error {
 		if err != nil {
 			return err
 		}
-		if err := a.db.Create(&AdminUser{Username: username, PasswordHash: string(hash)}).Error; err != nil {
+		now := time.Now()
+		if err := a.db.Create(&AdminUser{Username: username, PasswordHash: string(hash), PasswordChangedAt: &now}).Error; err != nil {
 			return err
 		}
 	}
@@ -339,6 +371,84 @@ func defaultBeds() []Bed {
 	}
 }
 
+func envInt(name string, def int) int {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return def
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return def
+	}
+	return v
+}
+
+func envBool(name string, def bool) bool {
+	raw := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
+	if raw == "" {
+		return def
+	}
+	if raw == "1" || raw == "true" || raw == "yes" || raw == "on" {
+		return true
+	}
+	if raw == "0" || raw == "false" || raw == "no" || raw == "off" {
+		return false
+	}
+	return def
+}
+
+func passwordMinLength() int {
+	return envInt("PASSWORD_MIN_LENGTH", 12)
+}
+
+func passwordMaxAgeDays() int {
+	return envInt("PASSWORD_MAX_AGE_DAYS", 90)
+}
+
+func authMaxAttempts() int {
+	return envInt("AUTH_MAX_ATTEMPTS", 5)
+}
+
+func authLockMinutes() int {
+	return envInt("AUTH_LOCK_MINUTES", 15)
+}
+
+func validatePasswordPolicy(password string) error {
+	if len(password) < passwordMinLength() || len(password) > 256 {
+		return fmt.Errorf("password must be %d-256 characters", passwordMinLength())
+	}
+	needUpper := envBool("PASSWORD_REQUIRE_UPPER", true)
+	needLower := envBool("PASSWORD_REQUIRE_LOWER", true)
+	needDigit := envBool("PASSWORD_REQUIRE_DIGIT", true)
+	needSymbol := envBool("PASSWORD_REQUIRE_SYMBOL", true)
+	hasUpper, hasLower, hasDigit, hasSymbol := false, false, false, false
+	for _, r := range password {
+		switch {
+		case unicode.IsUpper(r):
+			hasUpper = true
+		case unicode.IsLower(r):
+			hasLower = true
+		case unicode.IsDigit(r):
+			hasDigit = true
+		default:
+			hasSymbol = true
+		}
+	}
+	if needUpper && !hasUpper {
+		return fmt.Errorf("password must include an uppercase letter")
+	}
+	if needLower && !hasLower {
+		return fmt.Errorf("password must include a lowercase letter")
+	}
+	if needDigit && !hasDigit {
+		return fmt.Errorf("password must include a digit")
+	}
+	if needSymbol && !hasSymbol {
+		return fmt.Errorf("password must include a symbol")
+	}
+	return nil
+}
+
 func (a *App) handleMe(w http.ResponseWriter, r *http.Request) {
 	user, ok := a.currentUser(r)
 	writeJSON(w, http.StatusOK, map[string]any{"authenticated": ok, "username": user.Username, "admin": user.Username == defaultUsername})
@@ -368,10 +478,32 @@ func (a *App) handleAuth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
+	now := time.Now()
+	if user.LockedUntil != nil && user.LockedUntil.After(now) {
+		http.Error(w, "account locked due to failed attempts", http.StatusTooManyRequests)
+		return
+	}
+	if user.Username != defaultUsername && user.PasswordChangedAt != nil && passwordMaxAgeDays() > 0 {
+		expiresAt := user.PasswordChangedAt.Add(time.Duration(passwordMaxAgeDays()) * 24 * time.Hour)
+		if now.After(expiresAt) {
+			http.Error(w, "password expired, ask admin to reset it", http.StatusForbidden)
+			return
+		}
+	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+		user.FailedAttempts++
+		if user.FailedAttempts >= authMaxAttempts() {
+			lockedUntil := now.Add(time.Duration(authLockMinutes()) * time.Minute)
+			user.LockedUntil = &lockedUntil
+			user.FailedAttempts = 0
+		}
+		_ = a.db.Save(&user).Error
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
+	user.FailedAttempts = 0
+	user.LockedUntil = nil
+	_ = a.db.Save(&user).Error
 	token, err := randomToken()
 	if err != nil {
 		http.Error(w, "token error", http.StatusInternalServerError)
@@ -433,8 +565,12 @@ func (a *App) handleUsers(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "username and password required", http.StatusBadRequest)
 			return
 		}
-		if len(username) > 64 || len(password) < 8 || len(password) > 256 {
-			http.Error(w, "invalid username or password policy", http.StatusBadRequest)
+		if len(username) > 64 {
+			http.Error(w, "invalid username", http.StatusBadRequest)
+			return
+		}
+		if err := validatePasswordPolicy(password); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		var existing AdminUser
@@ -447,12 +583,13 @@ func (a *App) handleUsers(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "password hash failed", http.StatusInternalServerError)
 			return
 		}
-		user := AdminUser{Username: username, PasswordHash: string(hash)}
+		now := time.Now()
+		user := AdminUser{Username: username, PasswordHash: string(hash), PasswordChangedAt: &now}
 		if err := a.db.Create(&user).Error; err != nil {
 			http.Error(w, "create failed", http.StatusInternalServerError)
 			return
 		}
-		a.broadcast()
+		a.broadcastEvent("user.updated", map[string]any{"username": user.Username})
 		writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "user": userView{Username: user.Username, Admin: false}})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -480,8 +617,8 @@ func (a *App) handleUserPassword(w http.ResponseWriter, r *http.Request) {
 		targetUsername = actor.Username
 	}
 	newPassword := strings.TrimSpace(req.NewPassword)
-	if len(newPassword) < 8 || len(newPassword) > 256 {
-		http.Error(w, "invalid password policy", http.StatusBadRequest)
+	if err := validatePasswordPolicy(newPassword); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	actorIsAdmin := actor.Username == defaultUsername
@@ -510,11 +647,42 @@ func (a *App) handleUserPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	target.PasswordHash = string(hash)
+	now := time.Now()
+	target.PasswordChangedAt = &now
+	target.FailedAttempts = 0
+	target.LockedUntil = nil
 	if err := a.db.Save(&target).Error; err != nil {
 		http.Error(w, "save failed", http.StatusInternalServerError)
 		return
 	}
+	a.broadcastEvent("user.updated", map[string]any{"username": target.Username})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (a *App) handleAudit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var logs []AuditLog
+	if err := a.db.Order("created_at desc").Limit(200).Find(&logs).Error; err != nil {
+		http.Error(w, "audit read failed", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"logs": logs})
+}
+
+func (a *App) handleState(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	state, err := a.collectState(r)
+	if err != nil {
+		http.Error(w, "state error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, state)
 }
 
 func (a *App) handleStream(w http.ResponseWriter, r *http.Request) {
@@ -538,7 +706,7 @@ func (a *App) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data, _ := json.Marshal(payload)
-	_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
+	_, _ = fmt.Fprintf(w, "event: state.snapshot\ndata: %s\n\n", data)
 	flusher.Flush()
 
 	keepAlive := time.NewTicker(20 * time.Second)
@@ -559,6 +727,72 @@ func (a *App) handleStream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+func (a *App) handleBackup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	a.maintenanceMu.Lock()
+	defer a.maintenanceMu.Unlock()
+	if err := os.MkdirAll(backupDirName, 0o755); err != nil {
+		http.Error(w, "backup directory error", http.StatusInternalServerError)
+		return
+	}
+	backupFile := filepath.Join(backupDirName, fmt.Sprintf("bedboard_%s.db", time.Now().Format("20060102_150405")))
+	escaped := strings.ReplaceAll(backupFile, "'", "''")
+	if err := a.db.Exec("VACUUM INTO '" + escaped + "'").Error; err != nil {
+		http.Error(w, "backup failed", http.StatusInternalServerError)
+		return
+	}
+	a.broadcastEvent("system.backup", map[string]any{"file": backupFile})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "file": backupFile})
+}
+
+func (a *App) handleRestore(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	a.maintenanceMu.Lock()
+	defer a.maintenanceMu.Unlock()
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req restoreRequest
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	target := strings.TrimSpace(req.File)
+	if target == "" {
+		latest, err := latestBackupFile()
+		if err != nil {
+			http.Error(w, "no backup found", http.StatusNotFound)
+			return
+		}
+		target = latest
+	}
+	if !strings.HasPrefix(target, backupDirName+string(os.PathSeparator)) && !strings.HasPrefix(target, backupDirName+"/") {
+		http.Error(w, "invalid backup file", http.StatusBadRequest)
+		return
+	}
+	if _, err := os.Stat(target); err != nil {
+		http.Error(w, "backup not found", http.StatusNotFound)
+		return
+	}
+	if a.db != nil {
+		sqlDB, err := a.db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	}
+	if err := restoreDatabaseFile(target); err != nil {
+		http.Error(w, "restore failed", http.StatusInternalServerError)
+		return
+	}
+	if err := a.reopenDatabase(); err != nil {
+		http.Error(w, "reopen failed", http.StatusInternalServerError)
+		return
+	}
+	a.broadcastEvent("system.restore", map[string]any{"file": target})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "file": target})
 }
 
 func (a *App) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -585,13 +819,15 @@ func (a *App) handleStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bed not found", http.StatusNotFound)
 		return
 	}
+	user, _ := a.currentUser(r)
+	before := bed
 	bed.Status = normalizeStatus(req.Status)
 	if req.PatientName != "" {
 		bed.PatientName = req.PatientName
 	}
 	if bed.Status == statusFree || bed.Status == statusCleaning || bed.Status == statusAlert {
 		if bed.PatientID != nil {
-			a.releasePatientByID(*bed.PatientID)
+			a.releasePatientByID(*bed.PatientID, user.Username)
 		}
 		bed.PatientID = nil
 		bed.PatientName = ""
@@ -603,7 +839,8 @@ func (a *App) handleStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "save failed", http.StatusInternalServerError)
 		return
 	}
-	a.broadcast()
+	a.logBedChange(user.Username, "bed.status", before, bed)
+	a.broadcastEvent("bed.updated", map[string]any{"number": bed.Number})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -627,6 +864,8 @@ func (a *App) handleConfigBed(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bed not found", http.StatusNotFound)
 		return
 	}
+	user, _ := a.currentUser(r)
+	before := bed
 	if strings.TrimSpace(req.Name) != "" {
 		bed.Name = strings.TrimSpace(req.Name)
 	}
@@ -637,7 +876,8 @@ func (a *App) handleConfigBed(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "save failed", http.StatusInternalServerError)
 		return
 	}
-	a.broadcast()
+	a.logBedChange(user.Username, "bed.config", before, bed)
+	a.broadcastEvent("bed.updated", map[string]any{"number": bed.Number})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -671,7 +911,9 @@ func (a *App) handleBedsCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "create failed", http.StatusInternalServerError)
 		return
 	}
-	a.broadcast()
+	user, _ := a.currentUser(r)
+	a.logBedChange(user.Username, "bed.create", Bed{}, bed)
+	a.broadcastEvent("bed.created", map[string]any{"number": bed.Number})
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true})
 }
 
@@ -695,14 +937,17 @@ func (a *App) handleBedsDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bed not found", http.StatusNotFound)
 		return
 	}
+	user, _ := a.currentUser(r)
+	before := bed
 	if bed.PatientID != nil {
-		a.releasePatientByID(*bed.PatientID)
+		a.releasePatientByID(*bed.PatientID, user.Username)
 	}
 	if err := a.db.Delete(&bed).Error; err != nil {
 		http.Error(w, "delete failed", http.StatusInternalServerError)
 		return
 	}
-	a.broadcast()
+	a.logBedChange(user.Username, "bed.delete", before, Bed{})
+	a.broadcastEvent("bed.deleted", map[string]any{"number": before.Number})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -719,12 +964,13 @@ func (a *App) handlePatients(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "registration number required", http.StatusBadRequest)
 			return
 		}
-		patient, err := a.upsertAndAssignPatient(req)
+		user, _ := a.currentUser(r)
+		patient, err := a.upsertAndAssignPatient(req, user.Username)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		a.broadcast()
+		a.broadcastEvent("patient.updated", map[string]any{"registrationNumber": patient.RegistrationNumber})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "patient": patient})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -771,14 +1017,18 @@ func (a *App) handlePatientsArchive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "save failed", http.StatusInternalServerError)
 		return
 	}
-	a.broadcast()
+	a.broadcastEvent("patient.archived", map[string]any{"registrationNumber": patient.RegistrationNumber})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "patient": patient})
 }
 
-func (a *App) upsertAndAssignPatient(req patientRequest) (Patient, error) {
+func (a *App) upsertAndAssignPatient(req patientRequest, actor string) (Patient, error) {
 	bedNumber := req.BedNumber
 	if bedNumber == 0 {
 		bedNumber = req.BedID
+	}
+	if bedNumber > 0 {
+		unlock := a.lockBed(bedNumber)
+		defer unlock()
 	}
 	trimmedReg := strings.TrimSpace(req.RegistrationNumber)
 	trimmedName := strings.TrimSpace(req.Name)
@@ -813,12 +1063,9 @@ func (a *App) upsertAndAssignPatient(req patientRequest) (Patient, error) {
 	if err := a.db.Where("number = ?", bedNumber).First(&bed).Error; err != nil {
 		return Patient{}, fmt.Errorf("bed not found")
 	}
+	before := bed
 	if bed.PatientID != nil && *bed.PatientID != patient.ID {
-		var prevPatient Patient
-		if err := a.db.First(&prevPatient, *bed.PatientID).Error; err == nil {
-			prevPatient.BedID = nil
-			_ = a.db.Save(&prevPatient).Error
-		}
+		return Patient{}, fmt.Errorf("bed already assigned")
 	}
 	if patient.BedID != nil && *patient.BedID != bed.ID {
 		var previousBed Bed
@@ -843,10 +1090,11 @@ func (a *App) upsertAndAssignPatient(req patientRequest) (Patient, error) {
 	if err := a.db.Save(&bed).Error; err != nil {
 		return Patient{}, err
 	}
+	a.logBedChange(actor, "bed.assign", before, bed)
 	return patient, nil
 }
 
-func (a *App) releasePatientByID(patientID uint) {
+func (a *App) releasePatientByID(patientID uint, actor string) {
 	var patient Patient
 	if err := a.db.First(&patient, patientID).Error; err != nil {
 		return
@@ -854,10 +1102,12 @@ func (a *App) releasePatientByID(patientID uint) {
 	if patient.BedID != nil {
 		var bed Bed
 		if err := a.db.First(&bed, *patient.BedID).Error; err == nil {
+			before := bed
 			bed.PatientID = nil
 			bed.PatientName = ""
 			bed.Status = statusFree
 			_ = a.db.Save(&bed).Error
+			a.logBedChange(actor, "bed.release", before, bed)
 		}
 	}
 	// mark consultation done when the patient is released from bed
@@ -982,17 +1232,16 @@ func (a *App) listPatients() ([]Patient, error) {
 }
 
 func (a *App) broadcast() {
-	state, err := a.collectState(nil)
-	if err != nil {
-		log.Printf("broadcast state: %v", err)
-		return
-	}
-	data, err := json.Marshal(state)
+	a.broadcastEvent("state.changed", map[string]any{"reason": "update"})
+}
+
+func (a *App) broadcastEvent(event string, payload any) {
+	data, err := json.Marshal(payload)
 	if err != nil {
 		log.Printf("broadcast marshal: %v", err)
 		return
 	}
-	message := fmt.Sprintf("data: %s\n\n", data)
+	message := fmt.Sprintf("event: %s\ndata: %s\n\n", event, data)
 	a.clientsMu.Lock()
 	for client := range a.clients {
 		select {
@@ -1001,6 +1250,118 @@ func (a *App) broadcast() {
 		}
 	}
 	a.clientsMu.Unlock()
+}
+
+func (a *App) lockBed(number int) func() {
+	a.bedLocksMu.Lock()
+	lock, ok := a.bedLocks[number]
+	if !ok {
+		lock = &sync.Mutex{}
+		a.bedLocks[number] = lock
+	}
+	a.bedLocksMu.Unlock()
+	lock.Lock()
+	return func() {
+		lock.Unlock()
+	}
+}
+
+func (a *App) logBedChange(username, action string, before, after Bed) {
+	oldData, _ := json.Marshal(map[string]any{
+		"number":      before.Number,
+		"name":        before.Name,
+		"type":        before.Type,
+		"status":      before.Status,
+		"time":        before.Time,
+		"patientName": before.PatientName,
+	})
+	newData, _ := json.Marshal(map[string]any{
+		"number":      after.Number,
+		"name":        after.Name,
+		"type":        after.Type,
+		"status":      after.Status,
+		"time":        after.Time,
+		"patientName": after.PatientName,
+	})
+	entityKey := ""
+	if after.Number > 0 {
+		entityKey = fmt.Sprintf("bed:%d", after.Number)
+	} else if before.Number > 0 {
+		entityKey = fmt.Sprintf("bed:%d", before.Number)
+	}
+	entry := AuditLog{
+		Username:  fallback(username, "system"),
+		Entity:    "bed",
+		EntityKey: entityKey,
+		Action:    action,
+		OldValue:  string(oldData),
+		NewValue:  string(newData),
+	}
+	if err := a.db.Create(&entry).Error; err != nil {
+		log.Printf("audit log failed: %v", err)
+	}
+}
+
+func latestBackupFile() (string, error) {
+	entries, err := os.ReadDir(backupDirName)
+	if err != nil {
+		return "", err
+	}
+	paths := make([]string, 0)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasPrefix(name, "bedboard_") && strings.HasSuffix(name, ".db") {
+			paths = append(paths, filepath.Join(backupDirName, name))
+		}
+	}
+	if len(paths) == 0 {
+		return "", fmt.Errorf("no backup file")
+	}
+	sort.Strings(paths)
+	return paths[len(paths)-1], nil
+}
+
+func restoreDatabaseFile(backupFile string) error {
+	in, err := os.Open(backupFile)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dbFileName)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
+}
+
+func (a *App) reopenDatabase() error {
+	if a.db != nil {
+		sqlDB, err := a.db.DB()
+		if err == nil {
+			_ = sqlDB.Close()
+		}
+	}
+	db, err := gorm.Open(sqlite.Open(dbFileName), &gorm.Config{})
+	if err != nil {
+		return err
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return err
+	}
+	sqlDB.SetMaxOpenConns(1)
+	if err := db.AutoMigrate(&Bed{}, &Patient{}, &AdminUser{}, &Session{}, &AuditLog{}); err != nil {
+		return err
+	}
+	a.db = db
+	return nil
 }
 
 func (a *App) registerClient(ch chan string) {

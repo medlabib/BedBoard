@@ -33,10 +33,27 @@ function escapeText(value) {
   return String(value ?? '');
 }
 
+function loadCachedState() {
+  try {
+    const raw = localStorage.getItem('bedboard_state_cache');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return {
+      beds: Array.isArray(parsed.beds) ? parsed.beds : [],
+      patients: Array.isArray(parsed.patients) ? parsed.patients : [],
+      stats: parsed.stats || initialStats,
+    };
+  } catch (error) {
+    console.error(error);
+    return null;
+  }
+}
+
 function App() {
-  const [beds, setBeds] = useState([]);
-  const [patients, setPatients] = useState([]);
-  const [stats, setStats] = useState(initialStats);
+  const cached = loadCachedState();
+  const [beds, setBeds] = useState(cached?.beds || []);
+  const [patients, setPatients] = useState(cached?.patients || []);
+  const [stats, setStats] = useState(cached?.stats || initialStats);
   const [authenticated, setAuthenticated] = useState(false);
   const [user, setUser] = useState({ username: '', admin: false });
   const [users, setUsers] = useState([]);
@@ -53,6 +70,9 @@ function App() {
   const [assignByBed, setAssignByBed] = useState({});
   const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [resetPasswordForm, setResetPasswordForm] = useState({ username: '', newPassword: '', confirmPassword: '' });
+  const [bedEdits, setBedEdits] = useState({});
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [lastBackupFile, setLastBackupFile] = useState('');
 
   const isAdmin = user.admin;
 
@@ -90,20 +110,77 @@ function App() {
     }
     if (data.authenticated && data.admin) {
       await refreshUsers();
+      await refreshAudit(true);
     }
+  };
+
+  const refreshState = async () => {
+    const response = await fetch('/api/state', { credentials: 'include' });
+    const data = await response.json().catch(() => ({}));
+    setBeds(Array.isArray(data.beds) ? data.beds : []);
+    setPatients(Array.isArray(data.patients) ? data.patients : []);
+    setStats(data.stats || initialStats);
+  };
+
+  const refreshAudit = async (force = false) => {
+    if (!force && !isAdmin) {
+      setAuditLogs([]);
+      return;
+    }
+    const response = await api('/api/audit');
+    const data = await response.json().catch(() => ({ logs: [] }));
+    setAuditLogs(Array.isArray(data.logs) ? data.logs : []);
   };
 
   const connectStream = () => {
     const stream = new EventSource('/api/stream');
     setConnectionState('Connexion locale...');
 
-    stream.onmessage = (event) => {
+    let refreshTimer = null;
+    const scheduleRefresh = () => {
+      if (refreshTimer) return;
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        refreshState().catch(() => {
+          setConnectionState('Synchronisation locale interrompue.');
+        });
+      }, 120);
+    };
+
+    stream.addEventListener('state.snapshot', (event) => {
       try {
         const data = JSON.parse(event.data);
         setBeds(Array.isArray(data.beds) ? data.beds : []);
         setPatients(Array.isArray(data.patients) ? data.patients : []);
         setStats(data.stats || initialStats);
         setConnectionState('Connecté.');
+      } catch (error) {
+        console.error(error);
+      }
+    });
+
+    ['state.changed', 'bed.updated', 'bed.created', 'bed.deleted', 'patient.updated', 'patient.archived', 'user.updated', 'system.backup', 'system.restore'].forEach((eventName) => {
+      stream.addEventListener(eventName, () => {
+        scheduleRefresh();
+        if (eventName === 'user.updated') {
+          refreshUsers().catch(() => {});
+        }
+        if (eventName === 'system.restore' || eventName === 'bed.updated') {
+          refreshAudit().catch(() => {});
+        }
+      });
+    });
+
+    stream.onmessage = (event) => {
+      try {
+        if (!event.data) return;
+        const data = JSON.parse(event.data);
+        if (Array.isArray(data.beds) || Array.isArray(data.patients) || data.stats) {
+          setBeds(Array.isArray(data.beds) ? data.beds : []);
+          setPatients(Array.isArray(data.patients) ? data.patients : []);
+          setStats(data.stats || initialStats);
+          setConnectionState('Connecté.');
+        }
       } catch (error) {
         console.error(error);
       }
@@ -128,6 +205,25 @@ function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const next = { beds, patients, stats, savedAt: new Date().toISOString() };
+    localStorage.setItem('bedboard_state_cache', JSON.stringify(next));
+  }, [beds, patients, stats]);
+
+  useEffect(() => {
+    setBedEdits((current) => {
+      const valid = new Set(beds.map((b) => b.number));
+      const next = {};
+      Object.entries(current).forEach(([key, value]) => {
+        const number = Number(key);
+        if (valid.has(number)) {
+          next[key] = value;
+        }
+      });
+      return next;
+    });
+  }, [beds]);
 
   // auto-rotate patientview entries when visible
   useEffect(() => {
@@ -235,34 +331,54 @@ function App() {
             ) : null}
             {authenticated ? (
               <div className="form-grid compact">
+                {(() => {
+                  const draft = bedEdits[bed.number] || { name: bed.name, type: bed.type };
+                  return (
+                    <>
                 <label>
                   Nom
                   <input
-                    value={bed.name}
-                    onChange={async (event) => {
+                    value={draft.name}
+                    onChange={(event) => {
                       const nextName = event.target.value;
-                      await api('/api/config-bed', {
-                        method: 'POST',
-                        body: JSON.stringify({ number: bed.number, name: nextName, type: bed.type }),
-                      });
+                      setBedEdits((current) => ({ ...current, [bed.number]: { ...(current[bed.number] || { name: bed.name, type: bed.type }), name: nextName } }));
                     }}
                   />
                 </label>
                 <label>
                   Type
                   <select
-                    value={bed.type}
-                    onChange={async (event) => {
-                      await api('/api/config-bed', {
-                        method: 'POST',
-                        body: JSON.stringify({ number: bed.number, name: bed.name, type: event.target.value }),
-                      });
+                    value={draft.type}
+                    onChange={(event) => {
+                      const nextType = event.target.value;
+                      setBedEdits((current) => ({ ...current, [bed.number]: { ...(current[bed.number] || { name: bed.name, type: bed.type }), type: nextType } }));
                     }}
                   >
                     <option value="standard">Standard</option>
                     <option value="thoracique">Thoracique</option>
                   </select>
                 </label>
+                <button
+                  className="mini-btn"
+                  type="button"
+                  onClick={async () => {
+                    const next = bedEdits[bed.number] || { name: bed.name, type: bed.type };
+                    await api('/api/config-bed', {
+                      method: 'POST',
+                      body: JSON.stringify({ number: bed.number, name: next.name, type: next.type }),
+                    });
+                    setBedEdits((current) => {
+                      const copy = { ...current };
+                      delete copy[bed.number];
+                      return copy;
+                    });
+                  }}
+                >
+                  Enregistrer
+                </button>
+                    </>
+                  );
+                })()}
               </div>
             ) : null}
           </div>
@@ -461,10 +577,45 @@ function App() {
   const openSettings = async () => {
     setScreen('settings');
     await refreshUsers();
+    await refreshAudit(true);
   };
 
   const openAccount = () => {
     setScreen('account');
+  };
+
+  const createBackup = async () => {
+    if (!isAdmin) return;
+    const response = await api('/api/admin/backup', { method: 'POST', body: JSON.stringify({}) });
+    if (!response.ok) {
+      setConnectionState('Sauvegarde impossible.');
+      return;
+    }
+    const data = await response.json().catch(() => ({}));
+    setLastBackupFile(data.file || '');
+    setConnectionState('Sauvegarde SQLite créée.');
+    await refreshAudit();
+  };
+
+  const restoreLatestBackup = async () => {
+    if (!isAdmin) return;
+    setConfirm({
+      open: true,
+      title: 'Restaurer la dernière sauvegarde',
+      message: 'Cette action remplace la base SQLite actuelle. Continuer ?',
+      onConfirm: async () => {
+        const response = await api('/api/admin/restore', { method: 'POST', body: JSON.stringify({}) });
+        if (!response.ok) {
+          setConnectionState('Restauration impossible.');
+          return;
+        }
+        const data = await response.json().catch(() => ({}));
+        setLastBackupFile(data.file || '');
+        await refreshState();
+        await refreshAudit();
+        setConnectionState('Restauration SQLite terminée.');
+      },
+    });
   };
 
   return (
@@ -739,6 +890,14 @@ function App() {
                   <h2>Utilisateurs</h2>
                   <p className="small-note">Les comptes créés peuvent se connecter directement depuis la barre du haut.</p>
                 </div>
+                <div className="form-card">
+                  <h2>Sauvegarde / restauration</h2>
+                  <div className="form-grid">
+                    <button className="btn primary" type="button" onClick={createBackup}>Sauvegarde 1 clic</button>
+                    <button className="btn" type="button" onClick={restoreLatestBackup}>Restaurer dernière sauvegarde</button>
+                  </div>
+                  <p className="small-note">Dernière sauvegarde: {lastBackupFile ? escapeText(lastBackupFile) : 'Aucune'}</p>
+                </div>
               </div>
               <div className="table-wrap">
                 <table>
@@ -750,6 +909,30 @@ function App() {
                     </tr>
                   </thead>
                   <tbody>{renderUsers}</tbody>
+                </table>
+              </div>
+              <div className="table-wrap" style={{ marginTop: 16 }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Heure</th>
+                      <th>Utilisateur</th>
+                      <th>Action</th>
+                      <th>Objet</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {auditLogs.length ? auditLogs.map((entry) => (
+                      <tr key={entry.id || `${entry.createdAt}-${entry.action}-${entry.entityKey}`}>
+                        <td>{entry.createdAt ? new Date(entry.createdAt).toLocaleString() : '—'}</td>
+                        <td>{escapeText(entry.username || 'system')}</td>
+                        <td>{escapeText(entry.action)}</td>
+                        <td>{escapeText(entry.entityKey || entry.entity)}</td>
+                      </tr>
+                    )) : (
+                      <tr><td colSpan="4"><div className="empty">Aucune action journalisée.</div></td></tr>
+                    )}
+                  </tbody>
                 </table>
               </div>
             </div>
