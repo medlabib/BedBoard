@@ -255,6 +255,14 @@ function App() {
     return () => clearInterval(rot);
   }, [screen, patients, isPatientPage]);
 
+  // jump to newest assigned patient whenever a new assignment appears
+  useEffect(() => {
+    if (screen !== 'patientview' && !isPatientPage) return;
+    const assigned = patients.filter((p) => p.status === 'assigned' && p.bedNumber);
+    if (!assigned.length) return;
+    setPvIndex(0);
+  }, [patients, screen, isPatientPage]);
+
   const renderBeds = useMemo(() => {
     if (!beds.length) {
       return <div className="empty">Aucun lit disponible.</div>;
@@ -689,7 +697,7 @@ function App() {
     const assigned = patients.filter(p => p.status === 'assigned' && p.bedNumber).sort((a, b) => {
       const ta = a.assignedAt ? new Date(a.assignedAt).getTime() : 0;
       const tb = b.assignedAt ? new Date(b.assignedAt).getTime() : 0;
-      return ta - tb;
+      return tb - ta;
     });
     const list = assigned.length
       ? assigned
