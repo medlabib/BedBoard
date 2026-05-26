@@ -96,6 +96,23 @@ function App() {
   const showError = (text) => setNotice({ type: 'error', text });
   const showSuccess = (text) => setNotice({ type: 'success', text });
 
+  const closeConfirm = () => {
+    setConfirm({ open: false, title: '', message: '', onConfirm: null });
+  };
+
+  const handleConfirmAction = async () => {
+    try {
+      if (confirm.onConfirm) {
+        await confirm.onConfirm();
+      }
+    } catch (error) {
+      console.error(error);
+      showError('Action impossible pour le moment.');
+    } finally {
+      closeConfirm();
+    }
+  };
+
   const refreshUsers = async () => {
     if (!isAdmin) {
       setUsers([]);
@@ -336,7 +353,6 @@ function App() {
                       return;
                     }
                     showSuccess(`Lit ${bed.number} supprimé.`);
-                    setConfirm((current) => ({ ...current, open: false }));
                   } });
                 }}
               >
@@ -465,8 +481,10 @@ function App() {
                     showError(await readErrorMessage(response, 'Archivage patient impossible.'));
                     return;
                   }
+                  setPatients((current) => current.map((item) => item.registrationNumber === patient.registrationNumber
+                    ? { ...item, status: 'archived', bedNumber: null, bedName: '' }
+                    : item));
                   showSuccess(`Patient ${patient.registrationNumber} archivé.`);
-                  setConfirm((current) => ({ ...current, open: false }));
                 } });
               }}>Archiver</button>
             </>
@@ -1038,7 +1056,8 @@ function App() {
         </div>
       </div>
 
-      <div className={`modal-backdrop ${modalOpen ? 'open' : ''}`} aria-hidden={!modalOpen}>
+      {modalOpen ? (
+      <div className="modal-backdrop open" role="dialog" aria-modal="true">
         <div className="modal section-card">
           <h2>Connexion</h2>
           <p className="small-note">{authMessage}</p>
@@ -1058,17 +1077,20 @@ function App() {
           </div>
         </div>
       </div>
+      ) : null}
 
-      <div className={`modal-backdrop ${confirm.open ? 'open' : ''}`} aria-hidden={!confirm.open}>
+      {confirm.open ? (
+      <div className="modal-backdrop open" role="dialog" aria-modal="true">
         <div className="modal section-card">
           <h2>{confirm.title}</h2>
           <p className="small-note">{confirm.message}</p>
           <div className="modal-actions">
-            <button className="btn" type="button" onClick={() => setConfirm((current) => ({ ...current, open: false }))}>Annuler</button>
-            <button className="btn primary" type="button" onClick={async () => { if (confirm.onConfirm) await confirm.onConfirm(); setConfirm((current) => ({ ...current, open: false })); }}>Confirmer</button>
+            <button className="btn" type="button" onClick={closeConfirm}>Annuler</button>
+            <button className="btn primary" type="button" onClick={handleConfirmAction}>Confirmer</button>
           </div>
         </div>
       </div>
+      ) : null}
     </div>
   );
 }
