@@ -12,6 +12,11 @@ permissions:
 jobs:
   build-sign-release:
     runs-on: ubuntu-latest
+    env:
+      WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+      TIMESTAMP_URL: ${{ secrets.TIMESTAMP_URL }}
+      SIGNING_SUBJECT: ${{ secrets.SIGNING_SUBJECT }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,15 +51,10 @@ jobs:
           tar -czf release/BedBoard_linux_amd64.tar.gz -C release BedBoard_linux_amd64
 
       - name: Install signing tool
-        if: ${{ secrets.WINDOWS_CERT_BASE64 != '' && secrets.WINDOWS_CERT_PASSWORD != '' }}
+        if: ${{ env.WINDOWS_CERT_BASE64 != '' && env.WINDOWS_CERT_PASSWORD != '' }}
         run: sudo apt-get update && sudo apt-get install -y osslsigncode
 
       - name: Sign executable (optional)
-        env:
-          WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
-          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
-          TIMESTAMP_URL: ${{ secrets.TIMESTAMP_URL }}
-          SIGNING_SUBJECT: ${{ secrets.SIGNING_SUBJECT }}
         run: bash scripts/sign-windows.sh release/BedBoard_windows_amd64.exe
 
       - name: Package ZIP
