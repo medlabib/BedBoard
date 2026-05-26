@@ -75,7 +75,7 @@ Default admin access:
 
 ## Releases
 
-Each release ships ready-to-download artifacts for Windows and Linux.
+Each tag-based release uses a single GitHub Actions pipeline (`Release Signed (Optional)`) and ships ready-to-download artifacts for Windows and Linux.
 
 - Windows executable and ZIP package
 - Linux binary and tar.gz package
