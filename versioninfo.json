@@ -1,0 +1,39 @@
+{
+  "FixedFileInfo": {
+    "FileVersion": {
+      "Major": 1,
+      "Minor": 0,
+      "Patch": 1,
+      "Build": 0
+    },
+    "ProductVersion": {
+      "Major": 1,
+      "Minor": 0,
+      "Patch": 1,
+      "Build": 0
+    },
+    "FileFlagsMask": "3f",
+    "FileFlags": "00",
+    "FileOS": "040004",
+    "FileType": "01",
+    "FileSubType": "00"
+  },
+  "StringFileInfo": {
+    "Comments": "BedBoard desktop app",
+    "CompanyName": "Labib",
+    "FileDescription": "BedBoard",
+    "FileVersion": "1.0.1.0",
+    "InternalName": "BedBoard",
+    "LegalCopyright": "Copyright (c) Labib",
+    "OriginalFilename": "BedBoard_windows_amd64.exe",
+    "ProductName": "BedBoard",
+    "ProductVersion": "1.0.1.0"
+  },
+  "VarFileInfo": {
+    "Translation": {
+      "LangID": "040c",
+      "CharsetID": "04B0"
+    }
+  },
+  "IconPath": "logo.ico"
+}

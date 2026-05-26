@@ -43,6 +43,7 @@ function App() {
   const [screen, setScreen] = useState('beds');
   const [pvIndex, setPvIndex] = useState(0);
   const [modalOpen, setModalOpen] = useState(false);
+  const [confirm, setConfirm] = useState({ open: false, title: '', message: '', onConfirm: null });
   const [authForm, setAuthForm] = useState({ username: 'admin', password: '' });
   const [authMessage, setAuthMessage] = useState('Connectez-vous pour gérer les lits et les patients sur ce poste.');
   const [connectionState, setConnectionState] = useState('Liaison réseau en attente.');
@@ -194,10 +195,13 @@ function App() {
                 className="mini-btn"
                 type="button"
                 onClick={async () => {
-                  await api('/api/beds/delete', {
-                    method: 'POST',
-                    body: JSON.stringify({ number: bed.number }),
-                  });
+                  setConfirm({ open: true, title: 'Supprimer le lit', message: `Supprimer le lit ${bed.number} ?`, onConfirm: async () => {
+                    await api('/api/beds/delete', {
+                      method: 'POST',
+                      body: JSON.stringify({ number: bed.number }),
+                    });
+                    setConfirm({ ...confirm, open: false });
+                  } });
                 }}
               >
                 Supprimer
@@ -281,8 +285,11 @@ function App() {
                 setScreen('patients');
                 setNewPatient((current) => ({ ...current, registrationNumber: patient.registrationNumber }));
               }}>Réassigner</button>
-              <button className="mini-btn" type="button" onClick={async () => {
-                await api('/api/patients/archive', { method: 'POST', body: JSON.stringify({ registrationNumber: patient.registrationNumber, action: 'archive' }) });
+              <button className="mini-btn" type="button" onClick={() => {
+                setConfirm({ open: true, title: 'Archiver le patient', message: `Archiver le patient ${patient.registrationNumber} ?`, onConfirm: async () => {
+                  await api('/api/patients/archive', { method: 'POST', body: JSON.stringify({ registrationNumber: patient.registrationNumber, action: 'archive' }) });
+                  setConfirm({ ...confirm, open: false });
+                } });
               }}>Archiver</button>
             </>
           ) : 'Lecture seule'}
@@ -649,6 +656,16 @@ function App() {
             <button className="btn primary" type="button" onClick={authenticate}>Valider</button>
           </div>
         </div>
+          <div className={`modal-backdrop ${confirm.open ? 'open' : ''}`} aria-hidden={!confirm.open}>
+            <div className="modal section-card">
+              <h2>{confirm.title}</h2>
+              <p className="small-note">{confirm.message}</p>
+              <div className="modal-actions">
+                <button className="btn" type="button" onClick={() => setConfirm({ ...confirm, open: false })}>Annuler</button>
+                <button className="btn primary" type="button" onClick={async () => { if (confirm.onConfirm) await confirm.onConfirm(); setConfirm({ ...confirm, open: false }); }}>Confirmer</button>
+              </div>
+            </div>
+          </div>
       </div>
     </div>
   );
