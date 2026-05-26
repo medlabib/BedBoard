@@ -5,110 +5,79 @@
 </p>
 
 <p align="center">
-  <img alt="Local First" src="https://img.shields.io/badge/Local%20First-Fast%20on%20site-7ab893" />
-  <img alt="Real-Time" src="https://img.shields.io/badge/Real--Time-Bed%20visibility-7fa7d4" />
-  <img alt="Patient Flow" src="https://img.shields.io/badge/Patient%20Flow-Assigned%20to%20Archive-a58ac9" />
-  <img alt="Safe Access" src="https://img.shields.io/badge/Safe%20Access-Role%20based-d97a70" />
+  <img alt="Déploiement Local" src="https://img.shields.io/badge/D%C3%A9ploiement%20Local-Rapide%20et%20S%C3%A9curis%C3%A9-B5C7A4" />
+  <img alt="Temps Réel" src="https://img.shields.io/badge/Temps%20R%C3%A9el-Visibilit%C3%A9%20des%20lits-A6B8C7" />
+  <img alt="Parcours Patient" src="https://img.shields.io/badge/Parcours%20Patient-De%20l'entr%C3%A9e%20%C3%A0%20l'archive-D4B4A5" />
+  <img alt="Accès" src="https://img.shields.io/badge/Acc%C3%A8s-S%C3%A9curis%C3%A9-E2DACD" />
 </p>
 
 <p align="center">
-  <code style="background:#7ab893;color:#1e1a17;padding:4px 8px;border-radius:999px;">#7ab893</code>
-  <code style="background:#7fa7d4;color:#1e1a17;padding:4px 8px;border-radius:999px;">#7fa7d4</code>
-  <code style="background:#a58ac9;color:#1e1a17;padding:4px 8px;border-radius:999px;">#a58ac9</code>
-  <code style="background:#d97a70;color:#1e1a17;padding:4px 8px;border-radius:999px;">#d97a70</code>
+  <code style="background:#B5C7A4;color:#1e1a17;padding:4px 8px;border-radius:999px;">#B5C7A4</code>
+  <code style="background:#A6B8C7;color:#1e1a17;padding:4px 8px;border-radius:999px;">#A6B8C7</code>
+  <code style="background:#D4B4A5;color:#1e1a17;padding:4px 8px;border-radius:999px;">#D4B4A5</code>
+  <code style="background:#E2DACD;color:#1e1a17;padding:4px 8px;border-radius:999px;">#E2DACD</code>
 </p>
 
-BedBoard helps emergency and ward teams answer one operational question in seconds:
+**BedBoard** permet aux équipes médicales et paramédicales de répondre à la question opérationnelle la plus cruciale d'un service en un coup d'œil : 
 
-**Which beds are available now, who is assigned, and what is the next patient action?**
+**Quels lits sont actuellement disponibles, quel patient y est installé, et quelle est la prochaine étape de sa prise en charge ?**
 
-## The Problem It Solves
+## Le Défi du Quotidien
 
-Hospital teams often lose time between handwritten notes, verbal updates, and fragmented screens.
+Dans un environnement sous tension, les équipes soignantes perdent un temps précieux à cause d'une information fragmentée :
+* Les transmissions orales ou les notes manuscrites créent un décalage entre le tableau de bord et la réalité clinique.
+* Les changements de statut des lits (libération, bionettoyage en cours) ne sont pas visibles simultanément par le triage, les médecins et les infirmiers.
+* Lors des pics d'affluence, le suivi des étapes (attente de consultation, décision de sortie) manque de fluidité.
+* Les cadres de santé manquent d'une vision globale et instantanée de l'occupation du service.
 
-- Bed status changes are not visible to everyone at the same time.
-- Patient assignment can lag behind reality.
-- Consultation and archive steps are easy to miss during rush hours.
-- Leadership lacks a clear daily view of throughput.
+## L'Approche BedBoard
 
-## The BedBoard Solution
+Conçu spécifiquement pour un fonctionnement intra-hospitalier, BedBoard privilégie la vitesse de saisie et la clarté visuelle.
 
-BedBoard is built for a single-site, local deployment where speed and clarity matter most.
+* **Cartographie en direct :** Un tableau de bord unique reflétant l'occupation réelle du service.
+* **Gestion des flux :** Cycle de vie clair du patient (en attente, installé, consulté, archivé/sortant).
+* **Mode Affichage :** Une vue plein écran optimisée pour les moniteurs des postes de soins.
+* **Séparation des rôles :** Les soignants gèrent les patients et les lits ; les administrateurs gèrent la configuration de l'unité et les accès.
+* **Fiabilité locale :** Une architecture "local-first" qui garantit une réactivité maximale sans dépendre d'une connexion cloud externe.
 
-- One live board for the full bed map.
-- Direct patient assignment from bed cards and patient list.
-- Clear lifecycle: unassigned, assigned, consulted, archived.
-- Full-screen patient view for display screens.
-- Simple role model: staff can operate beds, admins manage configuration and users.
-- Password management built in: users can update their own password, and admins can reset user passwords.
+## Bénéfices pour les Équipes
 
-## What Teams Gain
+* **Fluidité des transmissions :** Des prises de décision accélérées lors des changements de garde.
+* **Réduction des erreurs :** Une meilleure coordination entre la zone de triage et la zone de soins.
+* **Anticipation :** Une visualisation immédiate de la tension et de la disponibilité hospitalière.
 
-- Faster decisions at shift change.
-- Fewer coordination errors between triage, nursing, and consultation.
-- Better visibility of occupancy pressure.
-- Reliable local operation without external cloud dependency.
+## Parcours Type sur l'Application
 
-## Typical Workflow
+1. **Identification :** Ajout rapide du patient sur le tableau de bord (création d'une entrée avec statut *en attente* ou *assigné*).
+2. **Installation :** Attribution d'un lit au patient directement depuis la cartographie centrale ou la liste d'attente.
+3. **Suivi du Lit :** Mise à jour en un clic du statut de l'emplacement pendant les soins (occupé, en nettoyage, alerte médicale, libre).
+4. **Validation :** Marquage de la consultation comme effectuée une fois le patient vu par le médecin.
+5. **Sortie :** Archivage de l'entrée du patient et libération immédiate du lit pour fluidifier l'aval.
+6. **Analyse :** Consultation de la vue statistique pour refléter l'activité journalière du service.
 
-1. Staff logs in on the local station.
-2. A patient is created (assigned or unassigned).
-3. Patient is assigned to a bed directly from the main board.
-4. Bed status is updated during care (occupied, cleaning, alert, free).
-5. Consultation is marked complete, then patient is archived.
-6. Stats view reflects daily activity for follow-up.
+---
 
-## Quick Start
+## Nouveautés de la v2.1
+
+La dernière mise à jour se concentre sur la sécurité patient et la traçabilité des actions :
+
+* **Prévention des conflits (Anti-collision) :** Un système de verrouillage logique empêche d'attribuer accidentellement un même lit à deux patients simultanément.
+* **Traçabilité totale :** Un journal d'audit complet enregistre chaque mouvement (qui a modifié l'état d'un lit, à quelle heure, et le statut précédent/actuel).
+* **Protection des accès renforcée :** Politique de mots de passe hautement paramétrable (longueur, caractères exigés, renouvellement automatique, verrouillage après tentatives échouées).
+* **Sauvegarde simplifiée :** L'administration permet désormais la sauvegarde et la restauration de la base de données en un seul clic.
+* **Performance et ergonomie :** Interface optimisée avec mise en cache locale pour des transitions sans clignotement, et actualisation instantanée par événements (fini le rafraîchissement manuel).
+
+---
+
+## Guide Technique et Déploiement
+
+BedBoard est conçu pour être déployé sur le réseau privé du centre de soins. En cas d'ouverture sur l'extérieur, il est impératif de le placer derrière un protocole HTTPS avec des politiques strictes de restriction d'accès réseau.
+
+### Démarrage Rapide
+
+Pour compiler et lancer le serveur en local :
 
 ```bash
 npm --prefix frontend ci
 npm --prefix frontend run build
 go run .
-```
-
-Open http://localhost:8080
-
-Default admin access:
-
-- Username: `admin`
-- Password: `admin123`
-
-## Releases
-
-Each tag-based release uses a single GitHub Actions pipeline (`Release Signed (Optional)`) and ships ready-to-download artifacts for Windows and Linux.
-
-- Windows executable and ZIP package
-- Linux binary and tar.gz package
-- Integrity and signature files for verification
-
-## v2.1 Upgrades
-
-- Audit trail for bed operations: who changed which bed, when, and before/after values.
-- Logical anti-conflict lock for bed assignment to prevent concurrent double assignment.
-- Strong configurable password policy:
-  - `PASSWORD_MIN_LENGTH`
-  - `PASSWORD_REQUIRE_UPPER`
-  - `PASSWORD_REQUIRE_LOWER`
-  - `PASSWORD_REQUIRE_DIGIT`
-  - `PASSWORD_REQUIRE_SYMBOL`
-  - `PASSWORD_MAX_AGE_DAYS`
-  - `AUTH_MAX_ATTEMPTS`
-  - `AUTH_LOCK_MINUTES`
-- One-click SQLite backup and restore (admin): timestamped backup files and latest restore.
-- Frontend performance improvements:
-  - explicit bed config save button instead of API calls on each keystroke
-  - local cache for beds/patients/stats to reduce flash on reload
-  - SSE switched to event-based updates (`state.snapshot`, `bed.updated`, `patient.archived`, etc.)
-
-## Deployment Positioning
-
-BedBoard is intentionally local-first for private hospital environments.
-For internet-facing deployments, place it behind HTTPS and restricted network access policies.
-
-## License
-
-BedBoard is distributed under CC BY-NC 4.0.
-
-- Attribution is required to the original developer (Labib).
-- Commercial use is not permitted without separate written permission.
-- Full terms: https://creativecommons.org/licenses/by-nc/4.0/
