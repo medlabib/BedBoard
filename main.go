@@ -21,7 +21,7 @@ import (
 	"gorm.io/gorm"
 )
 
-//go:embed frontend/dist icon.svg logo.png
+//go:embed frontend/dist logo.png
 var embeddedFiles embed.FS
 
 const (
@@ -202,15 +202,6 @@ func main() {
 			return
 		}
 		http.ServeFileFS(w, r, distFS, "index.html")
-	})
-	mux.HandleFunc("/icon.svg", func(w http.ResponseWriter, r *http.Request) {
-		iconFile, err := fs.ReadFile(embeddedFiles, "icon.svg")
-		if err != nil {
-			http.Error(w, "icon not found", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "image/svg+xml")
-		_, _ = w.Write(iconFile)
 	})
 	mux.HandleFunc("/logo.png", func(w http.ResponseWriter, r *http.Request) {
 		logoFile, err := fs.ReadFile(embeddedFiles, "logo.png")

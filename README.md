@@ -89,6 +89,7 @@ Workflow:
 - Signs artifacts using Sigstore Cosign keyless signing and uploads:
   - `.sig` signatures
   - `.pem` signing certificates
+- Windows `.exe` is also Authenticode-signed (required in release workflow).
 
 ### Verify signatures
 
@@ -119,6 +120,17 @@ Secrets:
 - Optional:
   - `TIMESTAMP_URL`
   - `SIGNING_SUBJECT`
+
+### Why "Unknown publisher" appears
+
+Windows shows "Unknown publisher" when the executable does not contain a trusted Authenticode signature.
+
+- Sigstore (`.sig`/`.pem`) is great for supply-chain verification, but Windows SmartScreen/UAC publisher text depends on Authenticode trust.
+- To show your publisher name in the UAC dialog, use a trusted OV/EV code-signing certificate and configure:
+  - `WINDOWS_CERT_BASE64`
+  - `WINDOWS_CERT_PASSWORD`
+
+The release workflow now fails if this certificate-based signing is missing, so unsigned Windows releases are no longer published by accident.
 
 ## API Overview
 

@@ -20,7 +20,13 @@ if [[ ! -f "$EXE_PATH" ]]; then
   exit 1
 fi
 
+REQUIRE_SIGNING="${REQUIRE_WINDOWS_AUTHENTICODE:-false}"
+
 if [[ -z "${WINDOWS_CERT_BASE64:-}" || -z "${WINDOWS_CERT_PASSWORD:-}" ]]; then
+  if [[ "$REQUIRE_SIGNING" == "true" ]]; then
+    echo "Signing secrets are required but not set."
+    exit 1
+  fi
   echo "Signing secrets are not set. Skipping signing."
   exit 0
 fi
@@ -54,3 +60,17 @@ echo "Signed executable: $EXE_PATH"
 if [[ -n "${SIGNING_SUBJECT:-}" ]]; then
   echo "Expected subject hint: $SIGNING_SUBJECT"
 fi
+
+# Verify Authenticode presence and optionally assert expected subject.
+VERIFY_OUT="$(osslsigncode verify "$EXE_PATH" 2>&1 || true)"
+if ! printf "%s" "$VERIFY_OUT" | grep -qi "Succeeded"; then
+  echo "Authenticode verification failed."
+  printf "%s\n" "$VERIFY_OUT"
+  exit 1
+fi
+if [[ -n "${SIGNING_SUBJECT:-}" ]] && ! printf "%s" "$VERIFY_OUT" | grep -qi "${SIGNING_SUBJECT}"; then
+  echo "Authenticode signer subject did not match SIGNING_SUBJECT hint."
+  printf "%s\n" "$VERIFY_OUT"
+  exit 1
+fi
+echo "Authenticode verification succeeded."
