@@ -57,6 +57,11 @@ type Patient struct {
 	RegistrationNumber string    `gorm:"uniqueIndex;not null" json:"registrationNumber"`
 	Name               string    `json:"name"`
 	BedID              *uint     `json:"-"`
+	Status             string    `json:"status"`
+	AssignedAt         *time.Time `json:"assignedAt"`
+	ConsultedAt        *time.Time `json:"consultedAt"`
+	ArchivedAt         *time.Time `json:"archivedAt"`
+	ExitAt             *time.Time `json:"exitAt"`
 	CreatedAt          time.Time `json:"-"`
 	UpdatedAt          time.Time `json:"-"`
 }
@@ -157,6 +162,7 @@ type patientView struct {
 	Name               string `json:"name"`
 	BedNumber          *int   `json:"bedNumber"`
 	BedName            string `json:"bedName"`
+	Status             string `json:"status"`
 }
 
 type statsView struct {
@@ -166,6 +172,10 @@ type statsView struct {
 	CleaningBeds  int `json:"cleaningBeds"`
 	AlertBeds     int `json:"alertBeds"`
 	TotalPatients int `json:"totalPatients"`
+	ArchivedPatients int                    `json:"archivedPatients"`
+	ConsultationsByDate []map[string]any    `json:"consultationsByDate"`
+	AvgConsultationMinutes float64          `json:"avgConsultationMinutes"`
+	TotalConsultations int                    `json:"totalConsultations"`
 }
 
 func main() {
@@ -220,6 +230,7 @@ func main() {
 	mux.HandleFunc("/api/beds", app.withCORS(app.requireAuth(app.handleBedsCreate)))
 	mux.HandleFunc("/api/beds/delete", app.withCORS(app.requireAuth(app.requireAdmin(app.handleBedsDelete))))
 	mux.HandleFunc("/api/patients", app.withCORS(app.requireAuth(app.handlePatients)))
+    mux.HandleFunc("/api/patients/archive", app.withCORS(app.requireAuth(app.handlePatientsArchive)))
 
 	serverAddr := defaultPort
 	if port := strings.TrimSpace(os.Getenv("PORT")); port != "" {
@@ -642,6 +653,49 @@ func (a *App) handlePatients(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (a *App) handlePatientsArchive(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct{
+		RegistrationNumber string `json:"registrationNumber"`
+		Action string `json:"action"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.RegistrationNumber) == "" {
+		http.Error(w, "registration number required", http.StatusBadRequest)
+		return
+	}
+	var patient Patient
+	if err := a.db.Where("registration_number = ?", strings.TrimSpace(req.RegistrationNumber)).First(&patient).Error; err != nil {
+		http.Error(w, "patient not found", http.StatusNotFound)
+		return
+	}
+	now := time.Now()
+	switch req.Action {
+	case "archive", "sortant":
+		patient.ArchivedAt = &now
+		patient.Status = "archived"
+		patient.ExitAt = &now
+	case "consulted":
+		patient.ConsultedAt = &now
+		patient.Status = "consulted"
+	default:
+		http.Error(w, "unknown action", http.StatusBadRequest)
+		return
+	}
+	if err := a.db.Save(&patient).Error; err != nil {
+		http.Error(w, "save failed", http.StatusInternalServerError)
+		return
+	}
+	a.broadcast()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "patient": patient})
+}
+
 func (a *App) upsertAndAssignPatient(req patientRequest) (Patient, error) {
 	bedNumber := req.BedNumber
 	if bedNumber == 0 {
@@ -655,6 +709,9 @@ func (a *App) upsertAndAssignPatient(req patientRequest) (Patient, error) {
 		patient = Patient{RegistrationNumber: strings.TrimSpace(req.RegistrationNumber)}
 	}
 	patient.Name = strings.TrimSpace(req.Name)
+	if patient.Status == "" {
+		patient.Status = "unassigned"
+	}
 	if err := a.db.Save(&patient).Error; err != nil {
 		return Patient{}, err
 	}
@@ -681,7 +738,10 @@ func (a *App) upsertAndAssignPatient(req patientRequest) (Patient, error) {
 			_ = a.db.Save(&previousBed).Error
 		}
 	}
+	now := time.Now()
 	patient.BedID = &bed.ID
+	patient.AssignedAt = &now
+	patient.Status = "assigned"
 	if err := a.db.Save(&patient).Error; err != nil {
 		return Patient{}, err
 	}
@@ -708,6 +768,12 @@ func (a *App) releasePatientByID(patientID uint) {
 			bed.Status = statusFree
 			_ = a.db.Save(&bed).Error
 		}
+	}
+	// mark consultation done when the patient is released from bed
+	now := time.Now()
+	if patient.BedID != nil {
+		patient.ConsultedAt = &now
+		patient.Status = "consulted"
 	}
 	patient.BedID = nil
 	_ = a.db.Save(&patient).Error
@@ -761,8 +827,13 @@ func (a *App) collectState(r *http.Request) (statePayload, error) {
 		views = append(views, view)
 	}
 	patientViews := make([]patientView, 0, len(patients))
+	// additional stats: archived, consultations by date, avg consultation length
+	archivedCount := 0
+	consultsByDate := make(map[string]int)
+	var totalConsultMinutes float64
+	var consultCount int
 	for _, patient := range patients {
-		view := patientView{RegistrationNumber: patient.RegistrationNumber, Name: patient.Name}
+		view := patientView{RegistrationNumber: patient.RegistrationNumber, Name: patient.Name, Status: patient.Status}
 		if patient.BedID != nil {
 			if bed, ok := bedByID[*patient.BedID]; ok {
 				n := bed.Number
@@ -770,8 +841,35 @@ func (a *App) collectState(r *http.Request) (statePayload, error) {
 				view.BedName = bed.Name
 			}
 		}
+		if patient.ArchivedAt != nil {
+			archivedCount++
+		}
+		if patient.ConsultedAt != nil {
+			dateKey := patient.ConsultedAt.Format("2006-01-02")
+			consultsByDate[dateKey]++
+			if patient.AssignedAt != nil {
+				diff := patient.ConsultedAt.Sub(*patient.AssignedAt).Minutes()
+				if diff >= 0 {
+					totalConsultMinutes += diff
+					consultCount++
+				}
+			}
+		}
 		patientViews = append(patientViews, view)
 	}
+	// convert consultsByDate to slice
+	consultsSlice := make([]map[string]any, 0, len(consultsByDate))
+	for k, v := range consultsByDate {
+		consultsSlice = append(consultsSlice, map[string]any{"date": k, "count": v})
+	}
+	avgMinutes := 0.0
+	if consultCount > 0 {
+		avgMinutes = totalConsultMinutes / float64(consultCount)
+	}
+	stats.ArchivedPatients = archivedCount
+	stats.ConsultationsByDate = consultsSlice
+	stats.AvgConsultationMinutes = avgMinutes
+	stats.TotalConsultations = consultCount
 	user, ok := a.currentUser(r)
 	return statePayload{Beds: views, Patients: patientViews, Stats: stats, Authenticated: ok, Username: user.Username, Admin: user.Username == defaultUsername, ServerTime: time.Now().Format(time.RFC3339)}, nil
 }

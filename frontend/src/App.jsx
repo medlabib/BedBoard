@@ -7,6 +7,10 @@ const initialStats = {
   cleaningBeds: 0,
   alertBeds: 0,
   totalPatients: 0,
+  archivedPatients: 0,
+  consultationsByDate: [],
+  avgConsultationMinutes: 0,
+  totalConsultations: 0,
 };
 
 const statusMeta = {
@@ -188,6 +192,25 @@ function App() {
               </button>
             ) : null}
             {authenticated ? (
+              <div className="assign-box">
+                <select defaultValue="" onChange={(e) => e.target.setAttribute('data-selected', e.target.value)}>
+                  <option value="">Affecter un patient</option>
+                  {patients.filter(p => !p.bedNumber).map(p => (
+                    <option key={p.registrationNumber} value={p.registrationNumber}>{p.registrationNumber}</option>
+                  ))}
+                </select>
+                <button className="mini-btn" type="button" onClick={async (e) => {
+                  const select = e.currentTarget.previousElementSibling;
+                  const reg = select && select.getAttribute('data-selected');
+                  if (!reg) return;
+                  await api('/api/patients', {
+                    method: 'POST',
+                    body: JSON.stringify({ registrationNumber: reg, name: '', bedNumber: bed.number }),
+                  });
+                }}>Affecter</button>
+              </div>
+            ) : null}
+            {authenticated ? (
               <div className="form-grid compact">
                 <label>
                   Nom
@@ -241,10 +264,15 @@ function App() {
         <td>{patient.bedNumber ? `Lit ${patient.bedNumber}` : 'Non assigné'}</td>
         <td>
           {authenticated ? (
-            <button className="mini-btn" type="button" onClick={() => {
-              setScreen('patients');
-              setNewPatient((current) => ({ ...current, registrationNumber: patient.registrationNumber }));
-            }}>Réassigner</button>
+            <>
+              <button className="mini-btn" type="button" onClick={() => {
+                setScreen('patients');
+                setNewPatient((current) => ({ ...current, registrationNumber: patient.registrationNumber }));
+              }}>Réassigner</button>
+              <button className="mini-btn" type="button" onClick={async () => {
+                await api('/api/patients/archive', { method: 'POST', body: JSON.stringify({ registrationNumber: patient.registrationNumber, action: 'archive' }) });
+              }}>Archiver</button>
+            </>
           ) : 'Lecture seule'}
         </td>
       </tr>
@@ -394,6 +422,8 @@ function App() {
           <div className="tab-strip">
             <button className={`tab-btn ${screen === 'beds' ? 'active' : ''}`} type="button" onClick={() => setScreen('beds')}>Lits</button>
             <button className={`tab-btn ${screen === 'patients' ? 'active' : ''}`} type="button" onClick={() => setScreen('patients')}>Patients</button>
+            <button className={`tab-btn ${screen === 'patientview' ? 'active' : ''}`} type="button" onClick={() => setScreen('patientview')}>Vue patient</button>
+            {authenticated ? <button className={`tab-btn ${screen === 'stats' ? 'active' : ''}`} type="button" onClick={() => setScreen('stats')}>Statistiques</button> : null}
             {authenticated && isAdmin ? <button className={`tab-btn ${screen === 'settings' ? 'active' : ''}`} type="button" onClick={openSettings}>Paramètres</button> : null}
           </div>
 
@@ -483,6 +513,70 @@ function App() {
                   </thead>
                   <tbody>{renderPatients}</tbody>
                 </table>
+              </div>
+            </div>
+          ) : null}
+
+          {screen === 'patientview' ? (
+            <div className="screen active">
+              <div className="controls-grid">
+                <div className="form-card">
+                  <h2>Vue patient (publique)</h2>
+                  <p className="small-note">Affiche uniquement le numéro d'inscription et le lit attribué.</p>
+                </div>
+              </div>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Numéro d'inscription</th>
+                      <th>Lit</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {patients.length ? patients.map(p => (
+                      <tr key={p.registrationNumber}>
+                        <td>{escapeText(p.registrationNumber)}</td>
+                        <td>{p.bedNumber ? `Lit ${p.bedNumber}` : 'Non assigné'}</td>
+                      </tr>
+                    )) : (
+                      <tr><td colSpan="2"><div className="empty">Aucun patient enregistré.</div></td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+
+          {screen === 'stats' && authenticated ? (
+            <div className="screen active">
+              <div className="controls-grid">
+                <div className="form-card">
+                  <h2>Statistiques</h2>
+                  <p className="small-note">Consultations par date, patients archivés, durée moyenne des consultations.</p>
+                </div>
+              </div>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Consultations</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(stats.consultationsByDate || []).length ? (stats.consultationsByDate || []).map(item => (
+                      <tr key={item.date}><td>{item.date}</td><td>{item.count}</td></tr>
+                    )) : (
+                      <tr><td colSpan="2"><div className="empty">Aucune consultation enregistrée.</div></td></tr>
+                    )}
+                  </tbody>
+                </table>
+                <div className="stats-grid" style={{marginTop: 16}}>
+                  <div className="stat"><span>Patients archivés</span><strong>{stats.archivedPatients || 0}</strong></div>
+                  <div className="stat"><span>Total consultations</span><strong>{stats.totalConsultations || 0}</strong></div>
+                  <div className="stat"><span>Durée moyenne (min)</span><strong>{Math.round(stats.avgConsultationMinutes) || 0}</strong></div>
+                </div>
               </div>
             </div>
           ) : null}
