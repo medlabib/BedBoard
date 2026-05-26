@@ -1,4 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
+import { callLanguageOptions, getCallTemplate } from './lib/call';
+import { normalizeRole } from './lib/roles';
+import { triageLevelOf, triageMeta } from './lib/triage';
+import AccountScreen from './components/AccountScreen';
+import BedsGrid from './components/BedsGrid';
+import PatientViewPage from './components/PatientViewPage';
+import PatientsRows from './components/PatientsRows';
+import ReceptionPage from './components/ReceptionPage';
+import SettingsScreen from './components/SettingsScreen';
+import SimpleModal from './components/SimpleModal';
+import StatsScreen from './components/StatsScreen';
 
 const initialStats = {
   totalBeds: 0,
@@ -11,6 +22,7 @@ const initialStats = {
   consultationsByDate: [],
   avgConsultationMinutes: 0,
   totalConsultations: 0,
+  triageByLevel: { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 },
 };
 
 const statusMeta = {
@@ -19,6 +31,7 @@ const statusMeta = {
   nettoyage: { label: 'Nettoyage', color: '#a58ac9', soft: 'rgba(165, 138, 201, 0.18)' },
   alerte: { label: 'Alerte', color: '#d97a70', soft: 'rgba(217, 122, 112, 0.18)' },
 };
+
 
 function normalizeStatus(value) {
   const key = String(value || 'libre').toLowerCase().trim();
@@ -38,9 +51,17 @@ function loadCachedState() {
     const raw = localStorage.getItem('bedboard_state_cache');
     if (!raw) return null;
     const parsed = JSON.parse(raw);
+
+    const safeBeds = (Array.isArray(parsed.beds) ? parsed.beds : []).map((bed) => ({
+      ...bed,
+      patientName: '',
+      patientRegistration: '',
+      hasPatient: false,
+    }));
+
     return {
-      beds: Array.isArray(parsed.beds) ? parsed.beds : [],
-      patients: Array.isArray(parsed.patients) ? parsed.patients : [],
+      beds: safeBeds,
+      patients: [],
       stats: parsed.stats || initialStats,
     };
   } catch (error) {
@@ -56,27 +77,38 @@ function App() {
   const [patients, setPatients] = useState(cached?.patients || []);
   const [stats, setStats] = useState(cached?.stats || initialStats);
   const [authenticated, setAuthenticated] = useState(false);
-  const [user, setUser] = useState({ username: '', admin: false });
+  const [user, setUser] = useState({ username: '', admin: false, role: 'user' });
   const [users, setUsers] = useState([]);
   const [screen, setScreen] = useState('beds');
-  const [pvIndex, setPvIndex] = useState(0);
+  const [callLanguage, setCallLanguage] = useState('fr-FR');
   const [modalOpen, setModalOpen] = useState(false);
   const [confirm, setConfirm] = useState({ open: false, title: '', message: '', onConfirm: null });
   const [authForm, setAuthForm] = useState({ username: 'admin', password: '' });
   const [authMessage, setAuthMessage] = useState('Connectez-vous pour gérer les lits et les patients sur ce poste.');
   const [connectionState, setConnectionState] = useState('Liaison réseau en attente.');
-  const [newBed, setNewBed] = useState({ number: '', name: '', type: 'standard' });
-  const [newPatient, setNewPatient] = useState({ registrationNumber: '', name: '', bedNumber: '' });
-  const [newUser, setNewUser] = useState({ username: '', password: '' });
+  const [newBed, setNewBed] = useState({ number: '', room: '', roomAlt: '', name: '', nameAlt: '', type: 'standard' });
+  const [newPatient, setNewPatient] = useState({ registrationNumber: '', name: '', bedNumber: '', triageScore: '0' });
+  const [newUser, setNewUser] = useState({ username: '', password: '', role: 'user' });
   const [assignByBed, setAssignByBed] = useState({});
   const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [resetPasswordForm, setResetPasswordForm] = useState({ username: '', newPassword: '', confirmPassword: '' });
+  const [gotifyForm, setGotifyForm] = useState({ enabled: false, url: '', token: '', priority: 8, tokenConfigured: false, clearToken: false });
+  const [securityHealth, setSecurityHealth] = useState({ status: 'unknown', checks: [], loaded: false });
   const [bedEdits, setBedEdits] = useState({});
   const [auditLogs, setAuditLogs] = useState([]);
   const [lastBackupFile, setLastBackupFile] = useState('');
   const [notice, setNotice] = useState({ type: '', text: '' });
 
   const isAdmin = user.admin;
+  const role = normalizeRole(user.role);
+  const isReception = role === 'reception';
+  const isTriage = role === 'triage';
+  const isDechocage = role === 'dechocage';
+  const canManageBeds = authenticated && (role === 'admin' || role === 'user' || role === 'dechocage');
+  const canManagePatients = authenticated && (role === 'admin' || role === 'user' || role === 'triage' || role === 'dechocage');
+  const canArchivePatients = authenticated && (role === 'admin' || role === 'user' || role === 'dechocage');
+  const canViewTriage = authenticated && !isReception;
+  const securityNavStatus = String(securityHealth?.status || 'unknown').toLowerCase();
 
   const api = async (url, options = {}) => {
     const response = await fetch(url, {
@@ -95,6 +127,14 @@ function App() {
 
   const showError = (text) => setNotice({ type: 'error', text });
   const showSuccess = (text) => setNotice({ type: 'success', text });
+
+  useEffect(() => {
+    if (!notice.text) return undefined;
+    const timer = window.setTimeout(() => {
+      setNotice({ type: '', text: '' });
+    }, 4500);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
 
   const closeConfirm = () => {
     setConfirm({ open: false, title: '', message: '', onConfirm: null });
@@ -125,9 +165,9 @@ function App() {
 
   const syncMe = async () => {
     const response = await fetch('/api/me', { credentials: 'include' });
-    const data = await response.json().catch(() => ({ authenticated: false, username: '', admin: false }));
+    const data = await response.json().catch(() => ({ authenticated: false, username: '', admin: false, role: 'user' }));
     setAuthenticated(Boolean(data.authenticated));
-    setUser({ username: data.username || '', admin: Boolean(data.admin) });
+    setUser({ username: data.username || '', admin: Boolean(data.admin), role: normalizeRole(data.role) });
     if (data.authenticated) {
       setModalOpen(false);
     }
@@ -135,10 +175,17 @@ function App() {
       setConnectionState(`Connecté: ${data.username}`);
     } else {
       setConnectionState('Accès local');
+      setBeds([]);
+      setPatients([]);
+      setStats(initialStats);
+      localStorage.removeItem('bedboard_state_cache');
     }
     if (data.authenticated && data.admin) {
       await refreshUsers();
       await refreshAudit(true);
+    }
+    if (data.authenticated && normalizeRole(data.role) === 'reception' && window.location.pathname !== '/patient-view') {
+      window.location.assign('/patient-view');
     }
   };
 
@@ -159,6 +206,77 @@ function App() {
     const data = await response.json().catch(() => ({ logs: [] }));
     setAuditLogs(Array.isArray(data.logs) ? data.logs : []);
   };
+
+  const refreshGotifySettings = async () => {
+    if (!isAdmin) return;
+    const response = await api('/api/admin/integrations/gotify', { method: 'GET' });
+    if (!response.ok) {
+      showError(await readErrorMessage(response, 'Lecture configuration Gotify impossible.'));
+      return;
+    }
+    const data = await response.json().catch(() => ({}));
+    setGotifyForm((current) => ({
+      ...current,
+      enabled: Boolean(data.enabled),
+      url: data.url || '',
+      token: '',
+      priority: Number(data.priority || 8),
+      tokenConfigured: Boolean(data.tokenConfigured),
+      clearToken: false,
+    }));
+  };
+
+  const saveGotifySettings = async () => {
+    if (!isAdmin) return;
+    const response = await api('/api/admin/integrations/gotify', {
+      method: 'POST',
+      body: JSON.stringify({
+        enabled: Boolean(gotifyForm.enabled),
+        url: gotifyForm.url,
+        token: gotifyForm.token,
+        priority: Number(gotifyForm.priority || 8),
+        clearToken: Boolean(gotifyForm.clearToken),
+      }),
+    });
+    if (!response.ok) {
+      showError(await readErrorMessage(response, 'Enregistrement Gotify impossible.'));
+      return;
+    }
+    await refreshGotifySettings();
+    showSuccess('Configuration Gotify enregistrée.');
+  };
+
+  const refreshSecurityHealth = async () => {
+    if (!isAdmin) {
+      setSecurityHealth({ status: 'unknown', checks: [], loaded: false });
+      return;
+    }
+    const response = await api('/api/admin/security/health', { method: 'GET' });
+    if (!response.ok) {
+      const fallback = await readErrorMessage(response, 'Lecture audit sécurité impossible.');
+      setSecurityHealth({ status: 'unknown', checks: [], loaded: true, error: fallback });
+      return;
+    }
+    const data = await response.json().catch(() => ({}));
+    setSecurityHealth({
+      status: data.status || 'unknown',
+      checks: Array.isArray(data.checks) ? data.checks : [],
+      loaded: true,
+      error: '',
+    });
+  };
+
+  useEffect(() => {
+    if (!authenticated || !isAdmin) {
+      return;
+    }
+    refreshSecurityHealth().catch(() => {});
+    const timer = window.setInterval(() => {
+      refreshSecurityHealth().catch(() => {});
+    }, 60000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticated, isAdmin]);
 
   const connectStream = () => {
     const stream = new EventSource('/api/stream');
@@ -197,6 +315,25 @@ function App() {
           refreshAudit().catch(() => {});
         }
       });
+    });
+
+    stream.addEventListener('alert.urgent', (event) => {
+      try {
+        const payload = JSON.parse(event.data || '{}');
+        const title = payload.title || 'URGENT';
+        const patient = payload.patient || 'Patient';
+        const room = payload.room || 'Chambre';
+        const bed = payload.bed || 'Lit';
+        const timeHM = payload.timeHM || '--:--';
+        const sourceUser = payload.sourceUser || 'system';
+        showError(`${title} - ${patient} - ${room} / ${bed} - ${timeHM} - ${sourceUser}`);
+        const currentRole = normalizeRole(window.localStorage.getItem('bedboard_current_role'));
+        if (currentRole === 'dechocage') {
+          playUrgentBeep();
+        }
+      } catch (error) {
+        console.error(error);
+      }
     });
 
     stream.onmessage = (event) => {
@@ -244,8 +381,23 @@ function App() {
 
   useEffect(() => {
     const next = { beds, patients, stats, savedAt: new Date().toISOString() };
+    if (!authenticated) {
+      localStorage.removeItem('bedboard_state_cache');
+      return;
+    }
     localStorage.setItem('bedboard_state_cache', JSON.stringify(next));
-  }, [beds, patients, stats]);
+  }, [beds, patients, stats, authenticated]);
+
+  useEffect(() => {
+    window.localStorage.setItem('bedboard_current_role', role);
+  }, [role]);
+
+  const activePatients = useMemo(() => patients.filter((p) => p.status !== 'archived'), [patients]);
+  const bedByNumber = useMemo(() => {
+    const map = new Map();
+    beds.forEach((bed) => map.set(Number(bed.number), bed));
+    return map;
+  }, [beds]);
 
   useEffect(() => {
     setBedEdits((current) => {
@@ -261,238 +413,46 @@ function App() {
     });
   }, [beds]);
 
-  // auto-rotate patientview entries when visible
-  useEffect(() => {
-    if (screen !== 'patientview' && !isPatientPage) return;
-    const rot = setInterval(() => {
-      const list = patients.filter(p => p.status === 'assigned' || !p.bedNumber);
-      if (!list.length) return;
-      setPvIndex((i) => (i + 1) % list.length);
-    }, 8000);
-    return () => clearInterval(rot);
-  }, [screen, patients, isPatientPage]);
-
-  // jump to newest assigned patient whenever a new assignment appears
-  useEffect(() => {
-    if (screen !== 'patientview' && !isPatientPage) return;
-    const assigned = patients.filter((p) => p.status === 'assigned' && p.bedNumber);
-    if (!assigned.length) return;
-    setPvIndex(0);
-  }, [patients, screen, isPatientPage]);
-
-  const renderBeds = useMemo(() => {
-    if (!beds.length) {
-      return <div className="empty">Aucun lit disponible.</div>;
+  const speakPatientCall = (patient) => {
+    if (!('speechSynthesis' in window)) {
+      showError('Synthèse vocale non disponible sur ce navigateur.');
+      return;
     }
-
-    return beds.map((bed) => {
-      const statusKey = normalizeStatus(bed.status);
-      const meta = statusMeta[statusKey] || statusMeta.libre;
-      const hasPatientInfo = Boolean(bed.patientName || bed.patientRegistration || bed.hasPatient);
-      const patientLine = hasPatientInfo
-        ? `${escapeText(bed.patientName || 'Patient affecté')}${bed.patientRegistration ? ` (${escapeText(bed.patientRegistration)})` : ''}`
-        : (statusKey === 'occupé' ? 'Patient affecté' : 'Aucun patient affecté');
-
-      return (
-        <article
-          key={bed.number}
-          className={`card status-${statusKey}`}
-          style={{ '--status-color': meta.color, '--status-soft': meta.soft }}
-        >
-          <div className="card-head">
-            <div>
-              <h3 className="card-title">Lit {bed.number} - {escapeText(bed.name)}</h3>
-              <div className="meta">
-                <span>Type: {escapeText(bed.type)}</span>
-                <span>Heure: {escapeText(bed.time || '—')}</span>
-              </div>
-            </div>
-            <div className="badge"><span className="mini-dot" />{meta.label}</div>
-          </div>
-          <div className="info-box">
-            <strong>Patient</strong>
-            <span>{patientLine}</span>
-          </div>
-          <div className="action-row">
-            <div className="status-actions">
-              {['libre', 'occupé', 'nettoyage', 'alerte'].map((status) => (
-                <button
-                  key={status}
-                  className="status-btn"
-                  data-status={status}
-                  disabled={!authenticated}
-                  onClick={async () => {
-                    if (!authenticated) return;
-                    const response = await api('/api/status', {
-                      method: 'POST',
-                      body: JSON.stringify({ number: bed.number, status }),
-                    });
-                    if (!response.ok) {
-                      showError(await readErrorMessage(response, 'Mise à jour état lit impossible.'));
-                      return;
-                    }
-                    showSuccess(`Lit ${bed.number} mis à jour: ${statusMeta[status].label}.`);
-                  }}
-                >
-                  {statusMeta[status].label}
-                </button>
-              ))}
-            </div>
-            {isAdmin ? (
-              <button
-                className="mini-btn"
-                type="button"
-                onClick={async () => {
-                  setConfirm({ open: true, title: 'Supprimer le lit', message: `Supprimer le lit ${bed.number} ?`, onConfirm: async () => {
-                    const response = await api('/api/beds/delete', {
-                      method: 'POST',
-                      body: JSON.stringify({ number: bed.number }),
-                    });
-                    if (!response.ok) {
-                      showError(await readErrorMessage(response, 'Suppression du lit impossible.'));
-                      return;
-                    }
-                    showSuccess(`Lit ${bed.number} supprimé.`);
-                  } });
-                }}
-              >
-                Supprimer
-              </button>
-            ) : null}
-            {authenticated ? (
-              <div className="assign-box">
-                <select
-                  value={assignByBed[bed.number] || ''}
-                  onChange={(e) => setAssignByBed((current) => ({ ...current, [bed.number]: e.target.value }))}
-                >
-                  <option value="">Affecter un patient</option>
-                  {patients.filter(p => !p.bedNumber).map(p => (
-                    <option key={p.registrationNumber} value={p.registrationNumber}>{p.registrationNumber}</option>
-                  ))}
-                </select>
-                <button className="mini-btn" type="button" onClick={async () => {
-                  const reg = assignByBed[bed.number];
-                  if (!reg) {
-                    showError('Sélectionnez un patient avant affectation.');
-                    return;
-                  }
-                  const selectedPatient = patients.find((p) => p.registrationNumber === reg);
-                  const response = await api('/api/patients', {
-                    method: 'POST',
-                    body: JSON.stringify({ registrationNumber: reg, name: selectedPatient?.name || '', bedNumber: bed.number }),
-                  });
-                  if (!response.ok) {
-                    showError(await readErrorMessage(response, 'Affectation patient impossible.'));
-                    return;
-                  }
-                  setAssignByBed((current) => ({ ...current, [bed.number]: '' }));
-                  showSuccess(`Patient ${reg} affecté au lit ${bed.number}.`);
-                }}>Affecter</button>
-              </div>
-            ) : null}
-            {authenticated ? (
-              <div className="form-grid compact">
-                {(() => {
-                  const draft = bedEdits[bed.number] || { name: bed.name, type: bed.type };
-                  return (
-                    <>
-                <label>
-                  Nom
-                  <input
-                    value={draft.name}
-                    onChange={(event) => {
-                      const nextName = event.target.value;
-                      setBedEdits((current) => ({ ...current, [bed.number]: { ...(current[bed.number] || { name: bed.name, type: bed.type }), name: nextName } }));
-                    }}
-                  />
-                </label>
-                <label>
-                  Type
-                  <select
-                    value={draft.type}
-                    onChange={(event) => {
-                      const nextType = event.target.value;
-                      setBedEdits((current) => ({ ...current, [bed.number]: { ...(current[bed.number] || { name: bed.name, type: bed.type }), type: nextType } }));
-                    }}
-                  >
-                    <option value="standard">Standard</option>
-                    <option value="thoracique">Thoracique</option>
-                  </select>
-                </label>
-                <button
-                  className="mini-btn"
-                  type="button"
-                  onClick={async () => {
-                    const next = bedEdits[bed.number] || { name: bed.name, type: bed.type };
-                    const response = await api('/api/config-bed', {
-                      method: 'POST',
-                      body: JSON.stringify({ number: bed.number, name: next.name, type: next.type }),
-                    });
-                    if (!response.ok) {
-                      showError(await readErrorMessage(response, 'Configuration lit impossible.'));
-                      return;
-                    }
-                    setBedEdits((current) => {
-                      const copy = { ...current };
-                      delete copy[bed.number];
-                      return copy;
-                    });
-                    showSuccess(`Configuration du lit ${bed.number} enregistrée.`);
-                  }}
-                >
-                  Enregistrer
-                </button>
-                    </>
-                  );
-                })()}
-              </div>
-            ) : null}
-          </div>
-        </article>
-      );
-    });
-  }, [beds, authenticated, isAdmin, assignByBed, patients]);
-
-  const renderPatients = useMemo(() => {
-    if (!patients.length) {
-      return (
-        <tr>
-          <td colSpan="4"><div className="empty">Aucun patient enregistré.</div></td>
-        </tr>
-      );
+    if (!patient?.bedNumber) {
+      showError('Patient non assigné, appel vocal indisponible.');
+      return;
     }
+    const bed = bedByNumber.get(Number(patient.bedNumber));
+    const roomName = bed?.roomAlt || bed?.room || patient.roomNameAlt || patient.roomName || 'Chambre';
+    const bedName = bed?.nameAlt || bed?.name || patient.bedNameAlt || patient.bedName || `Lit ${patient.bedNumber}`;
+    const text = getCallTemplate(callLanguage, patient.name || patient.registrationNumber, roomName, bedName);
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = callLanguage;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+    showSuccess(`Appel vocal lancé pour ${patient.registrationNumber}.`);
+  };
 
-    return patients.map((patient) => (
-      <tr key={patient.registrationNumber}>
-        <td>{escapeText(patient.registrationNumber)}</td>
-        <td>{escapeText(patient.name)}</td>
-        <td>{patient.bedNumber ? `Lit ${patient.bedNumber}` : 'Non assigné'}</td>
-        <td>
-          {authenticated ? (
-            <>
-              <button className="mini-btn" type="button" onClick={() => {
-                setScreen('patients');
-                setNewPatient((current) => ({ ...current, registrationNumber: patient.registrationNumber }));
-              }}>Réassigner</button>
-              <button className="mini-btn" type="button" onClick={() => {
-                setConfirm({ open: true, title: 'Archiver le patient', message: `Archiver le patient ${patient.registrationNumber} ?`, onConfirm: async () => {
-                  const response = await api('/api/patients/archive', { method: 'POST', body: JSON.stringify({ registrationNumber: patient.registrationNumber, action: 'archive' }) });
-                  if (!response.ok) {
-                    showError(await readErrorMessage(response, 'Archivage patient impossible.'));
-                    return;
-                  }
-                  setPatients((current) => current.map((item) => item.registrationNumber === patient.registrationNumber
-                    ? { ...item, status: 'archived', bedNumber: null, bedName: '' }
-                    : item));
-                  showSuccess(`Patient ${patient.registrationNumber} archivé.`);
-                } });
-              }}>Archiver</button>
-            </>
-          ) : 'Lecture seule'}
-        </td>
-      </tr>
-    ));
-  }, [patients, authenticated]);
+  const playUrgentBeep = () => {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.type = 'square';
+      oscillator.frequency.value = 880;
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.45);
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.start();
+      oscillator.stop(ctx.currentTime + 0.45);
+    } catch (error) {
+      console.error(error);
+    }
+  };
 
   const renderUsers = useMemo(() => {
     if (!isAdmin) {
@@ -512,7 +472,7 @@ function App() {
     return users.map((item) => (
       <tr key={item.username}>
         <td>{escapeText(item.username)}</td>
-        <td>{item.admin ? 'Admin' : 'Utilisateur'}</td>
+        <td>{escapeText(item.role || (item.admin ? 'admin' : 'user'))}</td>
         <td>
           <button
             className="mini-btn"
@@ -531,12 +491,15 @@ function App() {
       method: 'POST',
       body: JSON.stringify({
         number: Number(newBed.number),
+        room: newBed.room,
+        roomAlt: newBed.roomAlt,
         name: newBed.name,
+        nameAlt: newBed.nameAlt,
         type: newBed.type,
       }),
     });
     if (response.ok) {
-      setNewBed({ number: '', name: '', type: 'standard' });
+      setNewBed({ number: '', room: '', roomAlt: '', name: '', nameAlt: '', type: 'standard' });
       showSuccess('Lit créé.');
       return;
     }
@@ -544,16 +507,25 @@ function App() {
   };
 
   const savePatient = async () => {
+    if (!canManagePatients) {
+      showError('Action non autorisée pour votre profil.');
+      return;
+    }
+    if (isTriage && Number(newPatient.bedNumber) > 0) {
+      showError('Le profil triage ne peut pas affecter un lit.');
+      return;
+    }
     const response = await api('/api/patients', {
       method: 'POST',
       body: JSON.stringify({
         registrationNumber: newPatient.registrationNumber,
         name: newPatient.name,
         bedNumber: Number(newPatient.bedNumber),
+        triageScore: Number(newPatient.triageScore),
       }),
     });
     if (response.ok) {
-      setNewPatient({ registrationNumber: '', name: '', bedNumber: '' });
+      setNewPatient({ registrationNumber: '', name: '', bedNumber: '', triageScore: '0' });
       showSuccess('Patient enregistré.');
       return;
     }
@@ -570,13 +542,17 @@ function App() {
     if (response.ok) {
       const data = await response.json().catch(() => ({}));
       setAuthenticated(true);
-      setUser({ username: data.username || authForm.username || 'admin', admin: Boolean(data.admin) });
+      const nextRole = normalizeRole(data.role);
+      setUser({ username: data.username || authForm.username || 'admin', admin: Boolean(data.admin), role: nextRole });
       setModalOpen(false);
       setAuthForm((current) => ({ ...current, password: '' }));
       setConnectionState(data.username ? `Connecté: ${data.username}` : 'Connecté.');
       showSuccess('Connexion réussie.');
       if (data.admin) {
         await refreshUsers();
+      }
+      if (nextRole === 'reception') {
+        window.location.assign('/patient-view');
       }
       return;
     }
@@ -588,9 +564,14 @@ function App() {
   const logout = async () => {
     await fetch('/api/logout', { method: 'POST', credentials: 'include' });
     setAuthenticated(false);
-    setUser({ username: '', admin: false });
+    setUser({ username: '', admin: false, role: 'user' });
     setUsers([]);
     setConnectionState('Accès local');
+    setBeds([]);
+    setPatients([]);
+    setStats(initialStats);
+    localStorage.removeItem('bedboard_state_cache');
+    localStorage.removeItem('bedboard_current_role');
     showSuccess('Déconnexion effectuée.');
   };
 
@@ -600,7 +581,7 @@ function App() {
       body: JSON.stringify(newUser),
     });
     if (response.ok) {
-      setNewUser({ username: '', password: '' });
+      setNewUser({ username: '', password: '', role: 'user' });
       await refreshUsers();
       showSuccess('Utilisateur créé.');
       return;
@@ -661,8 +642,7 @@ function App() {
 
   const openSettings = async () => {
     setScreen('settings');
-    await refreshUsers();
-    await refreshAudit(true);
+    await Promise.all([refreshUsers(), refreshAudit(true), refreshGotifySettings(), refreshSecurityHealth()]);
   };
 
   const openAccount = () => {
@@ -711,45 +691,54 @@ function App() {
     });
   };
 
-  const patientPanel = useMemo(() => {
-    const assigned = patients.filter(p => p.status === 'assigned' && p.bedNumber).sort((a, b) => {
+  const currentPatient = useMemo(() => {
+    const assigned = activePatients.filter(p => p.status === 'assigned' && p.bedNumber).sort((a, b) => {
       const ta = a.assignedAt ? new Date(a.assignedAt).getTime() : 0;
       const tb = b.assignedAt ? new Date(b.assignedAt).getTime() : 0;
       return tb - ta;
     });
-    const list = assigned.length
-      ? assigned
-      : (patients.filter(p => !p.bedNumber).length ? patients.filter(p => !p.bedNumber) : patients);
-    if (!list.length) return <div className="empty">Aucun patient.</div>;
-    const current = list[pvIndex % list.length];
+    const unassigned = activePatients.filter((p) => !p.bedNumber).sort((a, b) => {
+      const ta = a.assignedAt ? new Date(a.assignedAt).getTime() : 0;
+      const tb = b.assignedAt ? new Date(b.assignedAt).getTime() : 0;
+      return tb - ta;
+    });
+    return assigned[0] || unassigned[0] || null;
+  }, [activePatients]);
+
+  const patientPanel = useMemo(() => {
+    const current = currentPatient;
+    if (!current) return <div className="empty">Aucun patient.</div>;
+    const level = triageLevelOf(current);
+    const triage = triageMeta[level] || triageMeta[0];
     return (
       <div className="patient-center">
-        <div className="patient-line">Patient {escapeText(current.registrationNumber)} — Lit {current.bedNumber || '—'}</div>
+        {canViewTriage ? <div className="triage-pill patient-triage" style={{ background: triage.color }}>{triage.label}</div> : null}
+        <div className="patient-line">Patient {escapeText(current.registrationNumber)} — {current.bedNumber ? `${escapeText(current.roomName || 'Chambre')} - ${escapeText(current.bedName || `Lit ${current.bedNumber}`)}` : 'Non assigné'}</div>
       </div>
     );
-  }, [patients, pvIndex]);
+  }, [currentPatient, canViewTriage]);
 
   if (isPatientPage) {
+    if (!authenticated) {
+      window.location.assign('/');
+      return null;
+    }
     return (
-      <div className="app patient-page-shell">
-        <div className="navbar">
-          <div className="nav-left">
-            <div className="brand-mark"><img src="/logo.svg" alt="Logo de l'hôpital" /></div>
-            <div className="nav-title">
-              <strong>BedBoard - Vue patient</strong>
-              <span>Affichage salle d'attente</span>
-            </div>
-          </div>
-          <div className="nav-actions">
-            <button className="btn" type="button" onClick={openMainPage}>Retour tableau</button>
-          </div>
-        </div>
-        <div className="section-card patient-page-card">
-          <div className="patient-full">
-            {patientPanel}
-          </div>
-        </div>
-      </div>
+      <PatientViewPage
+        callLanguage={callLanguage}
+        setCallLanguage={setCallLanguage}
+        callLanguageOptions={callLanguageOptions}
+        currentPatient={currentPatient}
+        speakPatientCall={speakPatientCall}
+        openMainPage={openMainPage}
+        patientPanel={patientPanel}
+      />
+    );
+  }
+
+  if (authenticated && isReception) {
+    return (
+      <ReceptionPage logout={logout} openPatientPage={openPatientPage} />
     );
   }
 
@@ -764,7 +753,17 @@ function App() {
           </div>
         </div>
         <div className="nav-actions">
-          {authenticated && user.username ? <div className="user-chip">{user.username}</div> : null}
+          <select className="form-select" value={callLanguage} onChange={(event) => setCallLanguage(event.target.value)}>
+            {callLanguageOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+          {authenticated && isAdmin ? (
+            <button className={`security-chip inline ${securityNavStatus}`} type="button" onClick={openSettings}>
+              Securite: {securityNavStatus.toUpperCase()}
+            </button>
+          ) : null}
+          {authenticated && user.username ? <div className="user-chip">{user.username} ({role})</div> : null}
           <button className="btn" type="button" onClick={openPatientPage}>Page patient</button>
           {authenticated && isAdmin ? <button className="btn" type="button" onClick={openSettings}>Paramètres</button> : null}
           {!authenticated ? <button className="btn" type="button" onClick={() => setModalOpen(true)}>Se connecter</button> : null}
@@ -772,7 +771,19 @@ function App() {
         </div>
       </div>
 
-      {notice.text ? <div className={`notice ${notice.type === 'error' ? 'error' : 'success'}`}>{notice.text}</div> : null}
+      {notice.text ? (
+        <div className={`notice ${notice.type === 'error' ? 'error' : 'success'}`} role="status" aria-live="polite">
+          <span>{notice.text}</span>
+          <button
+            className="notice-close"
+            type="button"
+            aria-label="Fermer la notification"
+            onClick={() => setNotice({ type: '', text: '' })}
+          >
+            Fermer
+          </button>
+        </div>
+      ) : null}
 
       <div className="shell">
         <div className="hero">
@@ -799,14 +810,14 @@ function App() {
 
         <div className="section-card">
           <div className="tab-strip">
-            <button className={`tab-btn ${screen === 'beds' ? 'active' : ''}`} type="button" onClick={() => setScreen('beds')}>Lits</button>
-            <button className={`tab-btn ${screen === 'patients' ? 'active' : ''}`} type="button" onClick={() => setScreen('patients')}>Patients</button>
-            {authenticated ? <button className={`tab-btn ${screen === 'stats' ? 'active' : ''}`} type="button" onClick={() => setScreen('stats')}>Statistiques</button> : null}
+            {canManageBeds ? <button className={`tab-btn ${screen === 'beds' ? 'active' : ''}`} type="button" onClick={() => setScreen('beds')}>Lits</button> : null}
+            {canManagePatients ? <button className={`tab-btn ${screen === 'patients' ? 'active' : ''}`} type="button" onClick={() => setScreen('patients')}>Patients</button> : null}
+            {authenticated && isAdmin ? <button className={`tab-btn ${screen === 'stats' ? 'active' : ''}`} type="button" onClick={() => setScreen('stats')}>Statistiques</button> : null}
             {authenticated ? <button className={`tab-btn ${screen === 'account' ? 'active' : ''}`} type="button" onClick={openAccount}>Mon compte</button> : null}
             {authenticated && isAdmin ? <button className={`tab-btn ${screen === 'settings' ? 'active' : ''}`} type="button" onClick={openSettings}>Paramètres</button> : null}
           </div>
 
-          {screen === 'beds' ? (
+          {screen === 'beds' && canManageBeds ? (
             <div className="screen active">
               <div className="controls-grid">
                 {isAdmin ? (
@@ -815,15 +826,27 @@ function App() {
                     <div className="form-grid">
                       <label>
                         Numéro
-                        <input value={newBed.number} type="number" min="1" onChange={(event) => setNewBed((current) => ({ ...current, number: event.target.value }))} />
+                        <input className="form-control" value={newBed.number} type="number" min="1" onChange={(event) => setNewBed((current) => ({ ...current, number: event.target.value }))} />
                       </label>
                       <label>
                         Nom
-                        <input value={newBed.name} type="text" onChange={(event) => setNewBed((current) => ({ ...current, name: event.target.value }))} />
+                        <input className="form-control" value={newBed.name} type="text" onChange={(event) => setNewBed((current) => ({ ...current, name: event.target.value }))} />
+                      </label>
+                      <label>
+                        Nom (autre langue)
+                        <input className="form-control" value={newBed.nameAlt} type="text" onChange={(event) => setNewBed((current) => ({ ...current, nameAlt: event.target.value }))} />
+                      </label>
+                      <label>
+                        Chambre
+                        <input className="form-control" value={newBed.room} type="text" onChange={(event) => setNewBed((current) => ({ ...current, room: event.target.value }))} />
+                      </label>
+                      <label>
+                        Chambre (autre langue)
+                        <input className="form-control" value={newBed.roomAlt} type="text" onChange={(event) => setNewBed((current) => ({ ...current, roomAlt: event.target.value }))} />
                       </label>
                       <label>
                         Type
-                        <select value={newBed.type} onChange={(event) => setNewBed((current) => ({ ...current, type: event.target.value }))}>
+                        <select className="form-select" value={newBed.type} onChange={(event) => setNewBed((current) => ({ ...current, type: event.target.value }))}>
                           <option value="standard">Standard</option>
                           <option value="thoracique">Thoracique</option>
                         </select>
@@ -842,54 +865,110 @@ function App() {
                   <p className="small-note">Les changements se synchronisent automatiquement sur les postes connectés.</p>
                 </div>
               </div>
-              <div className="grid">{renderBeds}</div>
+              <div className="grid">
+                <BedsGrid
+                  beds={beds}
+                  statusMeta={statusMeta}
+                  normalizeStatus={normalizeStatus}
+                  escapeText={escapeText}
+                  canManageBeds={canManageBeds}
+                  isAdmin={isAdmin}
+                  assignByBed={assignByBed}
+                  setAssignByBed={setAssignByBed}
+                  activePatients={activePatients}
+                  bedEdits={bedEdits}
+                  setBedEdits={setBedEdits}
+                  api={api}
+                  showError={showError}
+                  showSuccess={showSuccess}
+                  readErrorMessage={readErrorMessage}
+                  setConfirm={setConfirm}
+                />
+              </div>
               <div className="foot">Liaison réseau en attente.</div>
             </div>
           ) : null}
 
-          {screen === 'patients' ? (
+          {screen === 'patients' && canManagePatients ? (
             <div className="screen active">
-              <div className="controls-grid">
-                {authenticated ? (
-                  <div className="form-card">
-                    <h2>Ajouter / assigner</h2>
-                    <div className="form-grid">
-                        <label>
-                          Numéro
-                          <input value={newPatient.registrationNumber} type="text" onChange={(event) => setNewPatient((current) => ({ ...current, registrationNumber: event.target.value }))} />
-                        </label>
-                        <label>
-                          Nom
-                          <input value={newPatient.name} type="text" onChange={(event) => setNewPatient((current) => ({ ...current, name: event.target.value }))} />
-                        </label>
-                        <label>
-                          Lit
-                          <input value={newPatient.bedNumber} type="number" min="1" onChange={(event) => setNewPatient((current) => ({ ...current, bedNumber: event.target.value }))} />
-                        </label>
-                        <button className="btn primary" type="button" onClick={savePatient}>Enregistrer</button>
-                      </div>
-                    </div>
-                ) : (
-                  <div className="form-card">
-                    <h2>Liste des patients</h2>
-                    <p className="small-note">Lecture seule tant que vous n’êtes pas connecté.</p>
+              <div className="patients-header-grid">
+                <div className="form-card patient-command-card">
+                  <div className="patient-command-head">
+                    <h2>Poste de commande patients</h2>
+                    <p className="small-note">Saisie prioritaire pour l'ajout, le triage et l'assignation.</p>
                   </div>
-                )}
+                  <div className="patient-priority-row">
+                    <span className="patient-priority-chip">Actifs: {activePatients.length}</span>
+                    <span className="patient-priority-chip warn">Non assignes: {activePatients.filter((patient) => !patient.bedNumber).length}</span>
+                    <span className="patient-priority-chip danger">Triage critique: {activePatients.filter((patient) => triageLevelOf(patient) >= 3).length}</span>
+                  </div>
+                  <div className="form-grid patient-command-grid">
+                    <label>
+                      Numero
+                      <input className="form-control" value={newPatient.registrationNumber} type="text" onChange={(event) => setNewPatient((current) => ({ ...current, registrationNumber: event.target.value }))} />
+                    </label>
+                    <label>
+                      Nom
+                      <input className="form-control" value={newPatient.name} type="text" onChange={(event) => setNewPatient((current) => ({ ...current, name: event.target.value }))} />
+                    </label>
+                    <label>
+                      Lit
+                      <input className="form-control" value={newPatient.bedNumber} type="number" min="1" disabled={isTriage} onChange={(event) => setNewPatient((current) => ({ ...current, bedNumber: event.target.value }))} />
+                    </label>
+                    <label>
+                      Score triage (0-4)
+                      <select className="form-select" value={newPatient.triageScore} onChange={(event) => setNewPatient((current) => ({ ...current, triageScore: event.target.value }))}>
+                        <option value="0">0</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                      </select>
+                    </label>
+                    <button className="btn primary" type="button" onClick={savePatient}>Enregistrer patient</button>
+                  </div>
+                  {isTriage ? <p className="small-note">Le profil triage enregistre uniquement des patients non assignes.</p> : null}
+                </div>
                 <div className="form-card">
-                  <h2>Patients</h2>
+                  <h2>Actions critiques</h2>
+                  <p className="small-note">Prioriser les patients avec triage 3-4 puis traiter les non assignes.</p>
+                  <div className="patient-legend">
+                    <span className="patient-legend-item"><span className="legend-dot triage-critical-dot" /> Triage eleve</span>
+                    <span className="patient-legend-item"><span className="legend-dot triage-medium-dot" /> Triage modere</span>
+                    <span className="patient-legend-item"><span className="legend-dot triage-low-dot" /> Triage bas</span>
+                  </div>
                 </div>
               </div>
-              <div className="table-wrap">
-                <table>
+              <div className="table-wrap patients-table-wrap">
+                <table className="table table-sm align-middle mb-0 patients-table">
                   <thead>
                     <tr>
                       <th>Numéro d'inscription</th>
                       <th>Nom</th>
-                      <th>Lit</th>
-                      <th>Action</th>
+                      <th>Triage</th>
+                      <th>Chambre / Lit</th>
+                      <th>Actions</th>
                     </tr>
                   </thead>
-                  <tbody>{renderPatients}</tbody>
+                  <tbody>
+                    <PatientsRows
+                      activePatients={activePatients}
+                      canViewTriage={canViewTriage}
+                      authenticated={authenticated}
+                      canManageBeds={canManageBeds}
+                      canArchivePatients={canArchivePatients}
+                      setScreen={setScreen}
+                      setNewPatient={setNewPatient}
+                      setConfirm={setConfirm}
+                      api={api}
+                      showError={showError}
+                      showSuccess={showSuccess}
+                      readErrorMessage={readErrorMessage}
+                      setPatients={setPatients}
+                      speakPatientCall={speakPatientCall}
+                      escapeText={escapeText}
+                    />
+                  </tbody>
                 </table>
               </div>
             </div>
@@ -905,153 +984,39 @@ function App() {
             </div>
           ) : null}
 
-          {screen === 'stats' && authenticated ? (
-            <div className="screen active">
-              <div className="controls-grid">
-                <div className="form-card">
-                  <h2>Statistiques</h2>
-                  <p className="small-note">Consultations par date, patients archivés, durée moyenne des consultations.</p>
-                </div>
-              </div>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Date</th>
-                      <th>Consultations</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(stats.consultationsByDate || []).length ? (stats.consultationsByDate || []).map(item => (
-                      <tr key={item.date}><td>{item.date}</td><td>{item.count}</td></tr>
-                    )) : (
-                      <tr><td colSpan="2"><div className="empty">Aucune consultation enregistrée.</div></td></tr>
-                    )}
-                  </tbody>
-                </table>
-                <div className="stats-grid" style={{marginTop: 16}}>
-                  <div className="stat"><span>Patients archivés</span><strong>{stats.archivedPatients || 0}</strong></div>
-                  <div className="stat"><span>Total consultations</span><strong>{stats.totalConsultations || 0}</strong></div>
-                  <div className="stat"><span>Durée moyenne (min)</span><strong>{Math.round(stats.avgConsultationMinutes) || 0}</strong></div>
-                </div>
-              </div>
-            </div>
+          {screen === 'stats' && authenticated && isAdmin ? (
+            <StatsScreen stats={stats} />
           ) : null}
 
           {screen === 'account' && authenticated ? (
-            <div className="screen active">
-              <div className="controls-grid">
-                <div className="form-card">
-                  <h2>Changer mon mot de passe</h2>
-                  <div className="form-grid">
-                    <label>
-                      Mot de passe actuel
-                      <input value={passwordForm.currentPassword} type="password" onChange={(event) => setPasswordForm((current) => ({ ...current, currentPassword: event.target.value }))} />
-                    </label>
-                    <label>
-                      Nouveau mot de passe
-                      <input value={passwordForm.newPassword} type="password" onChange={(event) => setPasswordForm((current) => ({ ...current, newPassword: event.target.value }))} />
-                    </label>
-                    <label>
-                      Confirmer
-                      <input value={passwordForm.confirmPassword} type="password" onChange={(event) => setPasswordForm((current) => ({ ...current, confirmPassword: event.target.value }))} />
-                    </label>
-                    <button className="btn primary" type="button" onClick={changeOwnPassword}>Mettre à jour</button>
-                  </div>
-                </div>
-                <div className="form-card">
-                  <h2>Compte</h2>
-                  <p className="small-note">Connecté en tant que {escapeText(user.username)}.</p>
-                </div>
-              </div>
-            </div>
+            <AccountScreen
+              passwordForm={passwordForm}
+              setPasswordForm={setPasswordForm}
+              changeOwnPassword={changeOwnPassword}
+              user={user}
+            />
           ) : null}
 
           {screen === 'settings' && authenticated && isAdmin ? (
-            <div className="screen active">
-              <div className="controls-grid">
-                <div className="form-card">
-                  <h2>Ajouter un utilisateur</h2>
-                  <div className="form-grid">
-                    <label>
-                      Identifiant
-                      <input value={newUser.username} type="text" onChange={(event) => setNewUser((current) => ({ ...current, username: event.target.value }))} />
-                    </label>
-                    <label>
-                      Mot de passe
-                      <input value={newUser.password} type="password" onChange={(event) => setNewUser((current) => ({ ...current, password: event.target.value }))} />
-                    </label>
-                    <button className="btn primary" type="button" onClick={createUser}>Créer</button>
-                  </div>
-                </div>
-                <div className="form-card">
-                  <h2>Changer mot de passe utilisateur</h2>
-                  <div className="form-grid">
-                    <label>
-                      Utilisateur
-                      <input value={resetPasswordForm.username} type="text" onChange={(event) => setResetPasswordForm((current) => ({ ...current, username: event.target.value }))} />
-                    </label>
-                    <label>
-                      Nouveau mot de passe
-                      <input value={resetPasswordForm.newPassword} type="password" onChange={(event) => setResetPasswordForm((current) => ({ ...current, newPassword: event.target.value }))} />
-                    </label>
-                    <label>
-                      Confirmer
-                      <input value={resetPasswordForm.confirmPassword} type="password" onChange={(event) => setResetPasswordForm((current) => ({ ...current, confirmPassword: event.target.value }))} />
-                    </label>
-                    <button className="btn primary" type="button" onClick={resetUserPassword}>Mettre à jour</button>
-                  </div>
-                </div>
-                <div className="form-card">
-                  <h2>Utilisateurs</h2>
-                  <p className="small-note">Les comptes créés peuvent se connecter directement depuis la barre du haut.</p>
-                </div>
-                <div className="form-card">
-                  <h2>Sauvegarde / restauration</h2>
-                  <div className="form-grid">
-                    <button className="btn primary" type="button" onClick={createBackup}>Sauvegarde 1 clic</button>
-                    <button className="btn" type="button" onClick={restoreLatestBackup}>Restaurer dernière sauvegarde</button>
-                  </div>
-                  <p className="small-note">Dernière sauvegarde: {lastBackupFile ? escapeText(lastBackupFile) : 'Aucune'}</p>
-                </div>
-              </div>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Identifiant</th>
-                      <th>Rôle</th>
-                      <th>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>{renderUsers}</tbody>
-                </table>
-              </div>
-              <div className="table-wrap" style={{ marginTop: 16 }}>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Heure</th>
-                      <th>Utilisateur</th>
-                      <th>Action</th>
-                      <th>Objet</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {auditLogs.length ? auditLogs.map((entry) => (
-                      <tr key={entry.id || `${entry.createdAt}-${entry.action}-${entry.entityKey}`}>
-                        <td>{entry.createdAt ? new Date(entry.createdAt).toLocaleString() : '—'}</td>
-                        <td>{escapeText(entry.username || 'system')}</td>
-                        <td>{escapeText(entry.action)}</td>
-                        <td>{escapeText(entry.entityKey || entry.entity)}</td>
-                      </tr>
-                    )) : (
-                      <tr><td colSpan="4"><div className="empty">Aucune action journalisée.</div></td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            <SettingsScreen
+              newUser={newUser}
+              setNewUser={setNewUser}
+              createUser={createUser}
+              resetPasswordForm={resetPasswordForm}
+              setResetPasswordForm={setResetPasswordForm}
+              resetUserPassword={resetUserPassword}
+              createBackup={createBackup}
+              restoreLatestBackup={restoreLatestBackup}
+              lastBackupFile={lastBackupFile}
+              gotifyForm={gotifyForm}
+              setGotifyForm={setGotifyForm}
+              saveGotifySettings={saveGotifySettings}
+              securityHealth={securityHealth}
+              refreshSecurityHealth={refreshSecurityHealth}
+              renderUsers={renderUsers}
+              auditLogs={auditLogs}
+              escapeText={escapeText}
+            />
           ) : null}
         </div>
       </div>
@@ -1064,11 +1029,11 @@ function App() {
           <div className="modal-grid">
             <label>
               Identifiant
-              <input value={authForm.username} type="text" onChange={(event) => setAuthForm((current) => ({ ...current, username: event.target.value }))} />
+              <input className="form-control" value={authForm.username} type="text" onChange={(event) => setAuthForm((current) => ({ ...current, username: event.target.value }))} />
             </label>
             <label>
               Mot de passe
-              <input value={authForm.password} type="password" onChange={(event) => setAuthForm((current) => ({ ...current, password: event.target.value }))} />
+              <input className="form-control" value={authForm.password} type="password" onChange={(event) => setAuthForm((current) => ({ ...current, password: event.target.value }))} />
             </label>
           </div>
           <div className="modal-actions">
@@ -1080,16 +1045,12 @@ function App() {
       ) : null}
 
       {confirm.open ? (
-      <div className="modal-backdrop open" role="dialog" aria-modal="true">
-        <div className="modal section-card">
-          <h2>{confirm.title}</h2>
-          <p className="small-note">{confirm.message}</p>
-          <div className="modal-actions">
-            <button className="btn" type="button" onClick={closeConfirm}>Annuler</button>
-            <button className="btn primary" type="button" onClick={handleConfirmAction}>Confirmer</button>
-          </div>
-        </div>
-      </div>
+      <SimpleModal
+        title={confirm.title}
+        text={confirm.message}
+        onCancel={closeConfirm}
+        onConfirm={handleConfirmAction}
+      />
       ) : null}
     </div>
   );

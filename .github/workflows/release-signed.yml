@@ -41,6 +41,48 @@ jobs:
         with:
           go-version: '1.23'
 
+      - name: Security health gate (release)
+        env:
+          PORT: "18080"
+          ADMIN_INIT_USERNAME: "admin"
+          ADMIN_INIT_PASSWORD: "Release_Admin!234"
+          FORCE_SECURE_COOKIE: "true"
+          TRUST_PROXY_HEADERS: "true"
+          ENABLE_HSTS: "true"
+          HSTS_MAX_AGE: "31536000"
+          HSTS_INCLUDE_SUBDOMAINS: "true"
+          HSTS_PRELOAD: "false"
+          GOTIFY_TOKEN_ENC_KEY: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+        run: |
+          set -euo pipefail
+          go run . > /tmp/bedboard-security.log 2>&1 &
+          APP_PID=$!
+          trap 'kill "$APP_PID" >/dev/null 2>&1 || true' EXIT
+
+          curl --retry 30 --retry-delay 1 --retry-connrefused --fail --silent --show-error "http://127.0.0.1:${PORT}/api/me" > /dev/null
+
+          LOGIN_CODE="$(curl --silent --show-error --output /tmp/bedboard-login.json --write-out "%{http_code}" \
+            --cookie-jar /tmp/bedboard-cookie.txt \
+            --header "Content-Type: application/json" \
+            --data '{"username":"admin","password":"Release_Admin!234"}' \
+            "http://127.0.0.1:${PORT}/api/auth")"
+          if [[ "$LOGIN_CODE" != "200" ]]; then
+            cat /tmp/bedboard-login.json
+            cat /tmp/bedboard-security.log
+            exit 1
+          fi
+
+          HEALTH_CODE="$(curl --silent --show-error --output /tmp/bedboard-security-health.json --write-out "%{http_code}" \
+            --cookie /tmp/bedboard-cookie.txt \
+            "http://127.0.0.1:${PORT}/api/admin/security/health")"
+          if [[ "$HEALTH_CODE" != "200" ]]; then
+            cat /tmp/bedboard-security-health.json
+            cat /tmp/bedboard-security.log
+            exit 1
+          fi
+
+          node -e 'const fs=require("fs"); const data=JSON.parse(fs.readFileSync("/tmp/bedboard-security-health.json","utf8")); console.log("security health status:", data.status); if(data.status === "fail"){ process.exit(1); }'
+
       - name: Build unsigned Windows binary
         run: |
           mkdir -p release

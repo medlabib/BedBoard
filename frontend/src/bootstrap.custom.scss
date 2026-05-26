@@ -1,0 +1,26 @@
+@use "sass:map";
+
+/*
+	Bootstrap still relies on @import in 5.3.x.
+	Keep all framework imports isolated in this file so we can switch to @use
+	as soon as Bootstrap publishes an official @use-ready entrypoint.
+*/
+@import "bootstrap/scss/functions";
+@import "bootstrap/scss/variables";
+@import "bootstrap/scss/variables-dark";
+@import "bootstrap/scss/maps";
+@import "bootstrap/scss/mixins";
+@import "bootstrap/scss/utilities";
+
+/* Keep only utility classes used in JSX: mb-0 and align-middle */
+$utilities: (
+	"margin-bottom": map.get($utilities, "margin-bottom"),
+	"vertical-align": map.get($utilities, "vertical-align")
+);
+
+@import "bootstrap/scss/root";
+@import "bootstrap/scss/reboot";
+@import "bootstrap/scss/tables";
+@import "bootstrap/scss/forms";
+@import "bootstrap/scss/buttons";
+@import "bootstrap/scss/utilities/api";
