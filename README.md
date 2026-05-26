@@ -1,7 +1,7 @@
 # BedBoard
 
 <p align="center">
-  <img src="logo.png" alt="BedBoard" width="120" />
+  <img src="logo.svg" alt="BedBoard" width="120" />
 </p>
 
 <p align="center">
@@ -104,3 +104,11 @@ Each tag-based release uses a single GitHub Actions pipeline (`Release Signed (O
 
 BedBoard is intentionally local-first for private hospital environments.
 For internet-facing deployments, place it behind HTTPS and restricted network access policies.
+
+## License
+
+BedBoard is distributed under CC BY-NC 4.0.
+
+- Attribution is required to the original developer (Labib).
+- Commercial use is not permitted without separate written permission.
+- Full terms: https://creativecommons.org/licenses/by-nc/4.0/

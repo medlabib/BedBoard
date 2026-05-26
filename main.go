@@ -26,13 +26,12 @@ import (
 	"gorm.io/gorm"
 )
 
-//go:embed frontend/dist logo.png
+//go:embed frontend/dist logo.svg
 var embeddedFiles embed.FS
 
 const (
 	defaultPort       = ":8080"
 	dbFileName        = "bedboard.db"
-	legacyConfigFile  = "config_salle.json"
 	backupDirName     = "backups"
 	sessionCookieName = "bedboard_session"
 	sessionDuration   = 7 * 24 * time.Hour
@@ -102,18 +101,6 @@ type Session struct {
 	ExpiresAt   time.Time `json:"-"`
 	CreatedAt   time.Time `json:"-"`
 	UpdatedAt   time.Time `json:"-"`
-}
-
-type legacyConfig struct {
-	AdminPassword string `json:"admin_password"`
-	Beds          []struct {
-		ID      int    `json:"id"`
-		Name    string `json:"name"`
-		Type    string `json:"type"`
-		Status  string `json:"status"`
-		Patient string `json:"patient"`
-		Time    string `json:"time"`
-	} `json:"beds"`
 }
 
 type App struct {
@@ -237,13 +224,13 @@ func main() {
 		}
 		http.ServeFileFS(w, r, distFS, "index.html")
 	})
-	mux.HandleFunc("/logo.png", func(w http.ResponseWriter, r *http.Request) {
-		logoFile, err := fs.ReadFile(embeddedFiles, "logo.png")
+	mux.HandleFunc("/logo.svg", func(w http.ResponseWriter, r *http.Request) {
+		logoFile, err := fs.ReadFile(embeddedFiles, "logo.svg")
 		if err != nil {
 			http.Error(w, "logo not found", http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Content-Type", "image/svg+xml")
 		_, _ = w.Write(logoFile)
 	})
 	mux.HandleFunc("/api/me", app.withCORS(app.handleMe))
@@ -305,9 +292,6 @@ func (a *App) bootstrapData() error {
 	if adminCount == 0 {
 		username := defaultUsername
 		password := defaultPassword
-		if legacy, err := readLegacyConfig(); err == nil && legacy.AdminPassword != "" {
-			password = legacy.AdminPassword
-		}
 		hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		if err != nil {
 			return err
@@ -323,42 +307,12 @@ func (a *App) bootstrapData() error {
 		return err
 	}
 	if bedCount == 0 {
-		if legacy, err := readLegacyConfig(); err == nil && len(legacy.Beds) > 0 {
-			beds := make([]Bed, 0, len(legacy.Beds))
-			for _, item := range legacy.Beds {
-				bed := Bed{
-					Number:      item.ID,
-					Name:        fallback(item.Name, fmt.Sprintf("Lit %d", item.ID)),
-					Type:        normalizeType(item.Type),
-					Status:      normalizeStatus(item.Status),
-					Time:        item.Time,
-					PatientName: item.Patient,
-				}
-				beds = append(beds, bed)
-			}
-			if err := a.db.Create(&beds).Error; err != nil {
-				return err
-			}
-		} else {
-			beds := defaultBeds()
-			if err := a.db.Create(&beds).Error; err != nil {
-				return err
-			}
+		beds := defaultBeds()
+		if err := a.db.Create(&beds).Error; err != nil {
+			return err
 		}
 	}
 	return nil
-}
-
-func readLegacyConfig() (*legacyConfig, error) {
-	data, err := os.ReadFile(legacyConfigFile)
-	if err != nil {
-		return nil, err
-	}
-	var cfg legacyConfig
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, err
-	}
-	return &cfg, nil
 }
 
 func defaultBeds() []Bed {

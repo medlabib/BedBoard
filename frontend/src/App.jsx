@@ -734,7 +734,7 @@ function App() {
       <div className="app patient-page-shell">
         <div className="navbar">
           <div className="nav-left">
-            <div className="brand-mark"><img src="/logo.png" alt="Logo de l'hôpital" /></div>
+            <div className="brand-mark"><img src="/logo.svg" alt="Logo de l'hôpital" /></div>
             <div className="nav-title">
               <strong>BedBoard - Vue patient</strong>
               <span>Affichage salle d'attente</span>
@@ -757,7 +757,7 @@ function App() {
     <div className="app">
       <div className="navbar">
         <div className="nav-left">
-          <div className="brand-mark"><img src="/logo.png" alt="Logo de l'hôpital" /></div>
+          <div className="brand-mark"><img src="/logo.svg" alt="Logo de l'hôpital" /></div>
           <div className="nav-title">
             <strong>BedBoard</strong>
             <span>{connectionState}</span>
