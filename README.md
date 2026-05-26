@@ -5,158 +5,82 @@
 </p>
 
 <p align="center">
-  <img alt="Go" src="https://img.shields.io/badge/Go-1.23-7fa7d4" />
-  <img alt="React" src="https://img.shields.io/badge/React-Vite-7ab893" />
-  <img alt="SQLite" src="https://img.shields.io/badge/SQLite-GORM-a58ac9" />
-  <img alt="Security" src="https://img.shields.io/badge/Security-Hardened-d97a70" />
+  <img alt="Local First" src="https://img.shields.io/badge/Local%20First-Fast%20on%20site-7ab893" />
+  <img alt="Real-Time" src="https://img.shields.io/badge/Real--Time-Bed%20visibility-7fa7d4" />
+  <img alt="Patient Flow" src="https://img.shields.io/badge/Patient%20Flow-Assigned%20to%20Archive-a58ac9" />
+  <img alt="Safe Access" src="https://img.shields.io/badge/Safe%20Access-Role%20based-d97a70" />
 </p>
 
-BedBoard is a local hospital bed and patient management system with real-time updates, authentication, role-based permissions, and signed release artifacts.
+<p align="center">
+  <code style="background:#7ab893;color:#1e1a17;padding:4px 8px;border-radius:999px;">#7ab893</code>
+  <code style="background:#7fa7d4;color:#1e1a17;padding:4px 8px;border-radius:999px;">#7fa7d4</code>
+  <code style="background:#a58ac9;color:#1e1a17;padding:4px 8px;border-radius:999px;">#a58ac9</code>
+  <code style="background:#d97a70;color:#1e1a17;padding:4px 8px;border-radius:999px;">#d97a70</code>
+</p>
 
-## Features
+BedBoard helps emergency and ward teams answer one operational question in seconds:
 
-- Real-time dashboard using Server-Sent Events (`/api/stream`)
-- SQLite persistence with GORM
-- Authentication with session cookies and role checks (admin/user)
-- Bed management, patient assignment, consultation/archive lifecycle
-- Dedicated full-screen patient board view
-- Stats tab (consultations, archived patients, average consultation duration)
-- Automated release pipeline with signed Windows and Linux artifacts
+**Which beds are available now, who is assigned, and what is the next patient action?**
 
-## Security Pass Summary
+## The Problem It Solves
 
-Recent hardening includes:
+Hospital teams often lose time between handwritten notes, verbal updates, and fragmented screens.
 
-- Strict cookie settings (`HttpOnly`, `SameSite=Strict`, TLS-aware `Secure`)
-- Request body size limits on JSON endpoints
-- Username/password input bounds and password policy for created users
-- CORS origin validation (same-origin by default, optional override via `CORS_ALLOW_ORIGIN`)
-- Security headers:
-  - `Content-Security-Policy`
-  - `X-Content-Type-Options`
-  - `X-Frame-Options`
-  - `Referrer-Policy`
-  - `Permissions-Policy`
+- Bed status changes are not visible to everyone at the same time.
+- Patient assignment can lag behind reality.
+- Consultation and archive steps are easy to miss during rush hours.
+- Leadership lacks a clear daily view of throughput.
 
-## Local Development
+## The BedBoard Solution
 
-Install dependencies and build frontend:
+BedBoard is built for a single-site, local deployment where speed and clarity matter most.
+
+- One live board for the full bed map.
+- Direct patient assignment from bed cards and patient list.
+- Clear lifecycle: unassigned, assigned, consulted, archived.
+- Full-screen patient view for display screens.
+- Simple role model: staff can operate beds, admins manage configuration and users.
+
+## What Teams Gain
+
+- Faster decisions at shift change.
+- Fewer coordination errors between triage, nursing, and consultation.
+- Better visibility of occupancy pressure.
+- Reliable local operation without external cloud dependency.
+
+## Typical Workflow
+
+1. Staff logs in on the local station.
+2. A patient is created (assigned or unassigned).
+3. Patient is assigned to a bed directly from the main board.
+4. Bed status is updated during care (occupied, cleaning, alert, free).
+5. Consultation is marked complete, then patient is archived.
+6. Stats view reflects daily activity for follow-up.
+
+## Quick Start
 
 ```bash
 npm --prefix frontend ci
 npm --prefix frontend run build
-```
-
-Run backend:
-
-```bash
 go run .
 ```
 
-Open:
+Open http://localhost:8080
 
-- http://localhost:8080
+Default admin access:
 
-## Default Access
+- Username: `admin`
+- Password: `admin123`
 
-- Admin username: `admin`
-- Admin password: `admin123`
+## Releases
 
-## Build Artifacts
+Each release ships ready-to-download artifacts for Windows and Linux.
 
-Build Windows and Linux binaries manually:
+- Windows executable and ZIP package
+- Linux binary and tar.gz package
+- Integrity and signature files for verification
 
-```bash
-mkdir -p release
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o release/BedBoard_windows_amd64.exe .
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o release/BedBoard_linux_amd64 .
-tar -czf release/BedBoard_linux_amd64.tar.gz -C release BedBoard_linux_amd64
-zip -j release/BedBoard_windows_amd64.zip release/BedBoard_windows_amd64.exe
-```
+## Deployment Positioning
 
-## Signed Releases
-
-Workflow:
-
-- `.github/workflows/release-signed.yml`
-- Triggered manually with a tag input
-- Produces:
-  - `BedBoard_windows_amd64.exe`
-  - `BedBoard_windows_amd64.zip`
-  - `BedBoard_linux_amd64`
-  - `BedBoard_linux_amd64.tar.gz`
-  - `checksums.txt`
-- Signs artifacts using Sigstore Cosign keyless signing and uploads:
-  - `.sig` signatures
-  - `.pem` signing certificates
-- Windows `.exe` is also Authenticode-signed (required in release workflow).
-
-### Verify signatures
-
-```bash
-cosign verify-blob \
-  --signature BedBoard_windows_amd64.exe.sig \
-  --certificate BedBoard_windows_amd64.exe.pem \
-  BedBoard_windows_amd64.exe
-
-cosign verify-blob \
-  --signature BedBoard_linux_amd64.tar.gz.sig \
-  --certificate BedBoard_linux_amd64.tar.gz.pem \
-  BedBoard_linux_amd64.tar.gz
-```
-
-## Optional EV/OV Windows Certificate Signing
-
-If you have a `.pfx` code-signing certificate, the workflow can also apply Authenticode signing before publishing.
-
-Script:
-
-- `scripts/sign-windows.sh`
-
-Secrets:
-
-- `WINDOWS_CERT_BASE64`
-- `WINDOWS_CERT_PASSWORD`
-- Optional:
-  - `TIMESTAMP_URL`
-  - `SIGNING_SUBJECT`
-
-### Why "Unknown publisher" appears
-
-Windows shows "Unknown publisher" when the executable does not contain a trusted Authenticode signature.
-
-- Sigstore (`.sig`/`.pem`) is great for supply-chain verification, but Windows SmartScreen/UAC publisher text depends on Authenticode trust.
-- To show your publisher name in the UAC dialog, use a trusted OV/EV code-signing certificate and configure:
-  - `WINDOWS_CERT_BASE64`
-  - `WINDOWS_CERT_PASSWORD`
-
-If these secrets are missing, the release workflow now generates a temporary self-signed certificate fallback so Authenticode signing still happens.
-
-Important: this fallback is for testing pipelines only. To avoid SmartScreen/UAC trust warnings on user machines, use a trusted OV/EV certificate via the secrets above.
-
-## API Overview
-
-- `POST /api/auth`
-- `POST /api/logout`
-- `GET /api/me`
-- `GET /api/stream`
-- `POST /api/status`
-- `POST /api/config-bed`
-- `POST /api/beds`
-- `POST|DELETE /api/beds/delete`
-- `POST /api/patients`
-- `POST /api/patients/archive`
-- `GET|POST /api/users` (admin)
-
-## Project Structure
-
-- `main.go`: backend API + DB + SSE + embedded frontend serving
-- `frontend/`: React + Vite app
-- `scripts/`: helper scripts (including optional signing)
-- `.github/workflows/`: CI/release automation
-- `release/`: generated release artifacts
-
-## Notes
-
-- This app is designed for local/private deployment environments.
-- For internet-facing deployment, place behind HTTPS reverse proxy and set `CORS_ALLOW_ORIGIN` explicitly.
+BedBoard is intentionally local-first for private hospital environments.
+For internet-facing deployments, place it behind HTTPS and restricted network access policies.

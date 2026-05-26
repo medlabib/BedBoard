@@ -50,6 +50,7 @@ function App() {
   const [newBed, setNewBed] = useState({ number: '', name: '', type: 'standard' });
   const [newPatient, setNewPatient] = useState({ registrationNumber: '', name: '', bedNumber: '' });
   const [newUser, setNewUser] = useState({ username: '', password: '' });
+  const [assignByBed, setAssignByBed] = useState({});
 
   const isAdmin = user.admin;
 
@@ -200,7 +201,7 @@ function App() {
                       method: 'POST',
                       body: JSON.stringify({ number: bed.number }),
                     });
-                    setConfirm({ ...confirm, open: false });
+                    setConfirm((current) => ({ ...current, open: false }));
                   } });
                 }}
               >
@@ -209,20 +210,24 @@ function App() {
             ) : null}
             {authenticated ? (
               <div className="assign-box">
-                <select defaultValue="" onChange={(e) => e.target.setAttribute('data-selected', e.target.value)}>
+                <select
+                  value={assignByBed[bed.number] || ''}
+                  onChange={(e) => setAssignByBed((current) => ({ ...current, [bed.number]: e.target.value }))}
+                >
                   <option value="">Affecter un patient</option>
                   {patients.filter(p => !p.bedNumber).map(p => (
                     <option key={p.registrationNumber} value={p.registrationNumber}>{p.registrationNumber}</option>
                   ))}
                 </select>
-                <button className="mini-btn" type="button" onClick={async (e) => {
-                  const select = e.currentTarget.previousElementSibling;
-                  const reg = select && select.getAttribute('data-selected');
+                <button className="mini-btn" type="button" onClick={async () => {
+                  const reg = assignByBed[bed.number];
                   if (!reg) return;
+                  const selectedPatient = patients.find((p) => p.registrationNumber === reg);
                   await api('/api/patients', {
                     method: 'POST',
-                    body: JSON.stringify({ registrationNumber: reg, name: '', bedNumber: bed.number }),
+                    body: JSON.stringify({ registrationNumber: reg, name: selectedPatient?.name || '', bedNumber: bed.number }),
                   });
+                  setAssignByBed((current) => ({ ...current, [bed.number]: '' }));
                 }}>Affecter</button>
               </div>
             ) : null}
@@ -262,7 +267,7 @@ function App() {
         </article>
       );
     });
-  }, [beds, authenticated, isAdmin]);
+  }, [beds, authenticated, isAdmin, assignByBed, patients]);
 
   const renderPatients = useMemo(() => {
     if (!patients.length) {
@@ -288,7 +293,7 @@ function App() {
               <button className="mini-btn" type="button" onClick={() => {
                 setConfirm({ open: true, title: 'Archiver le patient', message: `Archiver le patient ${patient.registrationNumber} ?`, onConfirm: async () => {
                   await api('/api/patients/archive', { method: 'POST', body: JSON.stringify({ registrationNumber: patient.registrationNumber, action: 'archive' }) });
-                  setConfirm({ ...confirm, open: false });
+                  setConfirm((current) => ({ ...current, open: false }));
                 } });
               }}>Archiver</button>
             </>
@@ -557,7 +562,7 @@ function App() {
                       if (!list.length) return <div className="empty">Aucun patient.</div>;
                       const current = list[pvIndex % list.length];
                       return (
-                        <div className={`patient-center ${'fade-out'}`}>
+                        <div className="patient-center">
                           <div className="patient-line">Patient {escapeText(current.registrationNumber)} — Lit {current.bedNumber || '—'}</div>
                         </div>
                       );
@@ -638,7 +643,7 @@ function App() {
       </div>
 
       <div className={`modal-backdrop ${modalOpen ? 'open' : ''}`} aria-hidden={!modalOpen}>
-          <div className="modal section-card">
+        <div className="modal section-card">
           <h2>Connexion</h2>
           <p className="small-note">{authMessage}</p>
           <div className="modal-grid">
@@ -656,16 +661,17 @@ function App() {
             <button className="btn primary" type="button" onClick={authenticate}>Valider</button>
           </div>
         </div>
-          <div className={`modal-backdrop ${confirm.open ? 'open' : ''}`} aria-hidden={!confirm.open}>
-            <div className="modal section-card">
-              <h2>{confirm.title}</h2>
-              <p className="small-note">{confirm.message}</p>
-              <div className="modal-actions">
-                <button className="btn" type="button" onClick={() => setConfirm({ ...confirm, open: false })}>Annuler</button>
-                <button className="btn primary" type="button" onClick={async () => { if (confirm.onConfirm) await confirm.onConfirm(); setConfirm({ ...confirm, open: false }); }}>Confirmer</button>
-              </div>
-            </div>
+      </div>
+
+      <div className={`modal-backdrop ${confirm.open ? 'open' : ''}`} aria-hidden={!confirm.open}>
+        <div className="modal section-card">
+          <h2>{confirm.title}</h2>
+          <p className="small-note">{confirm.message}</p>
+          <div className="modal-actions">
+            <button className="btn" type="button" onClick={() => setConfirm((current) => ({ ...current, open: false }))}>Annuler</button>
+            <button className="btn primary" type="button" onClick={async () => { if (confirm.onConfirm) await confirm.onConfirm(); setConfirm((current) => ({ ...current, open: false })); }}>Confirmer</button>
           </div>
+        </div>
       </div>
     </div>
   );

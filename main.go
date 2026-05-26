@@ -159,11 +159,12 @@ type bedView struct {
 }
 
 type patientView struct {
-	RegistrationNumber string `json:"registrationNumber"`
-	Name               string `json:"name"`
-	BedNumber          *int   `json:"bedNumber"`
-	BedName            string `json:"bedName"`
-	Status             string `json:"status"`
+	RegistrationNumber string     `json:"registrationNumber"`
+	Name               string     `json:"name"`
+	BedNumber          *int       `json:"bedNumber"`
+	BedName            string     `json:"bedName"`
+	Status             string     `json:"status"`
+	AssignedAt         *time.Time `json:"assignedAt"`
 }
 
 type statsView struct {
@@ -649,8 +650,8 @@ func (a *App) handlePatients(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid json", http.StatusBadRequest)
 			return
 		}
-		if strings.TrimSpace(req.RegistrationNumber) == "" || strings.TrimSpace(req.Name) == "" {
-			http.Error(w, "registration number and name required", http.StatusBadRequest)
+		if strings.TrimSpace(req.RegistrationNumber) == "" {
+			http.Error(w, "registration number required", http.StatusBadRequest)
 			return
 		}
 		patient, err := a.upsertAndAssignPatient(req)
@@ -714,14 +715,26 @@ func (a *App) upsertAndAssignPatient(req patientRequest) (Patient, error) {
 	if bedNumber == 0 {
 		bedNumber = req.BedID
 	}
+	trimmedReg := strings.TrimSpace(req.RegistrationNumber)
+	trimmedName := strings.TrimSpace(req.Name)
+	isNew := false
 	var patient Patient
-	if err := a.db.Where("registration_number = ?", strings.TrimSpace(req.RegistrationNumber)).First(&patient).Error; err != nil {
+	if err := a.db.Where("registration_number = ?", trimmedReg).First(&patient).Error; err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return Patient{}, err
 		}
-		patient = Patient{RegistrationNumber: strings.TrimSpace(req.RegistrationNumber)}
+		isNew = true
+		patient = Patient{RegistrationNumber: trimmedReg}
 	}
-	patient.Name = strings.TrimSpace(req.Name)
+	if isNew && trimmedName == "" {
+		return Patient{}, fmt.Errorf("name required for new patient")
+	}
+	if trimmedName != "" {
+		patient.Name = trimmedName
+	}
+	if strings.TrimSpace(patient.Name) == "" {
+		return Patient{}, fmt.Errorf("name required")
+	}
 	if patient.Status == "" {
 		patient.Status = "unassigned"
 	}
@@ -846,7 +859,7 @@ func (a *App) collectState(r *http.Request) (statePayload, error) {
 	var totalConsultMinutes float64
 	var consultCount int
 	for _, patient := range patients {
-		view := patientView{RegistrationNumber: patient.RegistrationNumber, Name: patient.Name, Status: patient.Status}
+		view := patientView{RegistrationNumber: patient.RegistrationNumber, Name: patient.Name, Status: patient.Status, AssignedAt: patient.AssignedAt}
 		if patient.BedID != nil {
 			if bed, ok := bedByID[*patient.BedID]; ok {
 				n := bed.Number
