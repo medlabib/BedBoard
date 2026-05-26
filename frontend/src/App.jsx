@@ -51,6 +51,8 @@ function App() {
   const [newPatient, setNewPatient] = useState({ registrationNumber: '', name: '', bedNumber: '' });
   const [newUser, setNewUser] = useState({ username: '', password: '' });
   const [assignByBed, setAssignByBed] = useState({});
+  const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
+  const [resetPasswordForm, setResetPasswordForm] = useState({ username: '', newPassword: '', confirmPassword: '' });
 
   const isAdmin = user.admin;
 
@@ -307,14 +309,14 @@ function App() {
     if (!isAdmin) {
       return (
         <tr>
-          <td colSpan="2"><div className="empty">Réservé à l’admin.</div></td>
+          <td colSpan="3"><div className="empty">Réservé à l’admin.</div></td>
         </tr>
       );
     }
     if (!users.length) {
       return (
         <tr>
-          <td colSpan="2"><div className="empty">Aucun utilisateur.</div></td>
+          <td colSpan="3"><div className="empty">Aucun utilisateur.</div></td>
         </tr>
       );
     }
@@ -322,6 +324,15 @@ function App() {
       <tr key={item.username}>
         <td>{escapeText(item.username)}</td>
         <td>{item.admin ? 'Admin' : 'Utilisateur'}</td>
+        <td>
+          <button
+            className="mini-btn"
+            type="button"
+            onClick={() => setResetPasswordForm((current) => ({ ...current, username: item.username }))}
+          >
+            Changer mot de passe
+          </button>
+        </td>
       </tr>
     ));
   }, [users, isAdmin]);
@@ -396,9 +407,64 @@ function App() {
     setConnectionState('Création utilisateur impossible.');
   };
 
+  const changeOwnPassword = async () => {
+    if (!passwordForm.currentPassword || !passwordForm.newPassword) {
+      setConnectionState('Mot de passe actuel et nouveau requis.');
+      return;
+    }
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      setConnectionState('Confirmation du nouveau mot de passe invalide.');
+      return;
+    }
+    const response = await api('/api/users/password', {
+      method: 'POST',
+      body: JSON.stringify({
+        currentPassword: passwordForm.currentPassword,
+        newPassword: passwordForm.newPassword,
+      }),
+    });
+    if (response.ok) {
+      setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+      setConnectionState('Mot de passe mis à jour.');
+      return;
+    }
+    const message = await response.text().catch(() => 'Changement de mot de passe impossible.');
+    setConnectionState(message || 'Changement de mot de passe impossible.');
+  };
+
+  const resetUserPassword = async () => {
+    if (!isAdmin) return;
+    if (!resetPasswordForm.username || !resetPasswordForm.newPassword) {
+      setConnectionState('Utilisateur et nouveau mot de passe requis.');
+      return;
+    }
+    if (resetPasswordForm.newPassword !== resetPasswordForm.confirmPassword) {
+      setConnectionState('Confirmation du nouveau mot de passe invalide.');
+      return;
+    }
+    const response = await api('/api/users/password', {
+      method: 'POST',
+      body: JSON.stringify({
+        username: resetPasswordForm.username,
+        newPassword: resetPasswordForm.newPassword,
+      }),
+    });
+    if (response.ok) {
+      setResetPasswordForm({ username: '', newPassword: '', confirmPassword: '' });
+      setConnectionState('Mot de passe utilisateur mis à jour.');
+      return;
+    }
+    const message = await response.text().catch(() => 'Réinitialisation mot de passe impossible.');
+    setConnectionState(message || 'Réinitialisation mot de passe impossible.');
+  };
+
   const openSettings = async () => {
     setScreen('settings');
     await refreshUsers();
+  };
+
+  const openAccount = () => {
+    setScreen('account');
   };
 
   return (
@@ -448,6 +514,7 @@ function App() {
             <button className={`tab-btn ${screen === 'patients' ? 'active' : ''}`} type="button" onClick={() => setScreen('patients')}>Patients</button>
             <button className={`tab-btn ${screen === 'patientview' ? 'active' : ''}`} type="button" onClick={() => setScreen('patientview')}>Vue patient</button>
             {authenticated ? <button className={`tab-btn ${screen === 'stats' ? 'active' : ''}`} type="button" onClick={() => setScreen('stats')}>Statistiques</button> : null}
+            {authenticated ? <button className={`tab-btn ${screen === 'account' ? 'active' : ''}`} type="button" onClick={openAccount}>Mon compte</button> : null}
             {authenticated && isAdmin ? <button className={`tab-btn ${screen === 'settings' ? 'active' : ''}`} type="button" onClick={openSettings}>Paramètres</button> : null}
           </div>
 
@@ -604,6 +671,35 @@ function App() {
             </div>
           ) : null}
 
+          {screen === 'account' && authenticated ? (
+            <div className="screen active">
+              <div className="controls-grid">
+                <div className="form-card">
+                  <h2>Changer mon mot de passe</h2>
+                  <div className="form-grid">
+                    <label>
+                      Mot de passe actuel
+                      <input value={passwordForm.currentPassword} type="password" onChange={(event) => setPasswordForm((current) => ({ ...current, currentPassword: event.target.value }))} />
+                    </label>
+                    <label>
+                      Nouveau mot de passe
+                      <input value={passwordForm.newPassword} type="password" onChange={(event) => setPasswordForm((current) => ({ ...current, newPassword: event.target.value }))} />
+                    </label>
+                    <label>
+                      Confirmer
+                      <input value={passwordForm.confirmPassword} type="password" onChange={(event) => setPasswordForm((current) => ({ ...current, confirmPassword: event.target.value }))} />
+                    </label>
+                    <button className="btn primary" type="button" onClick={changeOwnPassword}>Mettre à jour</button>
+                  </div>
+                </div>
+                <div className="form-card">
+                  <h2>Compte</h2>
+                  <p className="small-note">Connecté en tant que {escapeText(user.username)}.</p>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
           {screen === 'settings' && authenticated && isAdmin ? (
             <div className="screen active">
               <div className="controls-grid">
@@ -622,6 +718,24 @@ function App() {
                   </div>
                 </div>
                 <div className="form-card">
+                  <h2>Changer mot de passe utilisateur</h2>
+                  <div className="form-grid">
+                    <label>
+                      Utilisateur
+                      <input value={resetPasswordForm.username} type="text" onChange={(event) => setResetPasswordForm((current) => ({ ...current, username: event.target.value }))} />
+                    </label>
+                    <label>
+                      Nouveau mot de passe
+                      <input value={resetPasswordForm.newPassword} type="password" onChange={(event) => setResetPasswordForm((current) => ({ ...current, newPassword: event.target.value }))} />
+                    </label>
+                    <label>
+                      Confirmer
+                      <input value={resetPasswordForm.confirmPassword} type="password" onChange={(event) => setResetPasswordForm((current) => ({ ...current, confirmPassword: event.target.value }))} />
+                    </label>
+                    <button className="btn primary" type="button" onClick={resetUserPassword}>Mettre à jour</button>
+                  </div>
+                </div>
+                <div className="form-card">
                   <h2>Utilisateurs</h2>
                   <p className="small-note">Les comptes créés peuvent se connecter directement depuis la barre du haut.</p>
                 </div>
@@ -632,6 +746,7 @@ function App() {
                     <tr>
                       <th>Identifiant</th>
                       <th>Rôle</th>
+                      <th>Action</th>
                     </tr>
                   </thead>
                   <tbody>{renderUsers}</tbody>

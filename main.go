@@ -112,6 +112,12 @@ type userRequest struct {
 	Password string `json:"password"`
 }
 
+type passwordChangeRequest struct {
+	Username        string `json:"username"`
+	CurrentPassword string `json:"currentPassword"`
+	NewPassword     string `json:"newPassword"`
+}
+
 type userView struct {
 	Username string `json:"username"`
 	Admin    bool   `json:"admin"`
@@ -218,6 +224,7 @@ func main() {
 	mux.HandleFunc("/api/logout", app.withCORS(app.handleLogout))
 	mux.HandleFunc("/api/stream", app.withCORS(app.handleStream))
 	mux.HandleFunc("/api/users", app.withCORS(app.requireAuth(app.requireAdmin(app.handleUsers))))
+	mux.HandleFunc("/api/users/password", app.withCORS(app.requireAuth(app.handleUserPassword)))
 	mux.HandleFunc("/api/status", app.withCORS(app.requireAuth(app.handleStatus)))
 	mux.HandleFunc("/api/config-bed", app.withCORS(app.requireAuth(app.handleConfigBed)))
 	mux.HandleFunc("/api/beds", app.withCORS(app.requireAuth(app.handleBedsCreate)))
@@ -450,6 +457,64 @@ func (a *App) handleUsers(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (a *App) handleUserPassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	actor, ok := a.currentUser(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req passwordChangeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	targetUsername := strings.TrimSpace(req.Username)
+	if targetUsername == "" {
+		targetUsername = actor.Username
+	}
+	newPassword := strings.TrimSpace(req.NewPassword)
+	if len(newPassword) < 8 || len(newPassword) > 256 {
+		http.Error(w, "invalid password policy", http.StatusBadRequest)
+		return
+	}
+	actorIsAdmin := actor.Username == defaultUsername
+	if targetUsername != actor.Username && !actorIsAdmin {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if targetUsername == actor.Username {
+		if strings.TrimSpace(req.CurrentPassword) == "" {
+			http.Error(w, "current password required", http.StatusBadRequest)
+			return
+		}
+		if err := bcrypt.CompareHashAndPassword([]byte(actor.PasswordHash), []byte(req.CurrentPassword)); err != nil {
+			http.Error(w, "current password invalid", http.StatusUnauthorized)
+			return
+		}
+	}
+	var target AdminUser
+	if err := a.db.Where("username = ?", targetUsername).First(&target).Error; err != nil {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		http.Error(w, "password hash failed", http.StatusInternalServerError)
+		return
+	}
+	target.PasswordHash = string(hash)
+	if err := a.db.Save(&target).Error; err != nil {
+		http.Error(w, "save failed", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (a *App) handleStream(w http.ResponseWriter, r *http.Request) {

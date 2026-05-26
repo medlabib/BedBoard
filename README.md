@@ -40,6 +40,7 @@ BedBoard is built for a single-site, local deployment where speed and clarity ma
 - Clear lifecycle: unassigned, assigned, consulted, archived.
 - Full-screen patient view for display screens.
 - Simple role model: staff can operate beds, admins manage configuration and users.
+- Password management built in: users can update their own password, and admins can reset user passwords.
 
 ## What Teams Gain
 
