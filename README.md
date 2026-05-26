@@ -11,12 +11,6 @@
   <img alt="Accès" src="https://img.shields.io/badge/Acc%C3%A8s-S%C3%A9curis%C3%A9-E2DACD" />
 </p>
 
-<p align="center">
-  <code style="background:#B5C7A4;color:#1e1a17;padding:4px 8px;border-radius:999px;">#B5C7A4</code>
-  <code style="background:#A6B8C7;color:#1e1a17;padding:4px 8px;border-radius:999px;">#A6B8C7</code>
-  <code style="background:#D4B4A5;color:#1e1a17;padding:4px 8px;border-radius:999px;">#D4B4A5</code>
-  <code style="background:#E2DACD;color:#1e1a17;padding:4px 8px;border-radius:999px;">#E2DACD</code>
-</p>
 
 **BedBoard** permet aux équipes médicales et paramédicales de répondre à la question opérationnelle la plus cruciale d'un service en un coup d'œil : 
 
