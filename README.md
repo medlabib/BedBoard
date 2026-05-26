@@ -33,6 +33,11 @@ Then open [http://localhost:8080](http://localhost:8080).
 	- authenticated users can change bed status and assign patients;
 	- admins can create and delete beds, manage users, and edit bed metadata.
 
+## Patient view
+
+- A dedicated full-screen patient display is available under the "Vue patient" navigation tab. It shows the next patient to be processed as a single line: "Patient <num> — Lit <n>".
+
+
 ## Useful defaults
 
 - Admin username: `admin`
@@ -43,4 +48,15 @@ Then open [http://localhost:8080](http://localhost:8080).
 
 ```bash
 set GOOS=windows && set GOARCH=amd64 && go build -ldflags="-s -w" -o bedboard.exe .
+```
+
+## Releases
+
+Prebuilt Windows releases are stored under the `release/` directory in this workspace. The packaged release `BedBoard_windows_amd64.zip` contains the standalone `BedBoard_windows_amd64.exe` with the embedded frontend.
+
+To build a Windows release locally (from Linux/macOS), run:
+
+```bash
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o release/BedBoard_windows_amd64.exe .
+zip -j release/BedBoard_windows_amd64.zip release/BedBoard_windows_amd64.exe
 ```

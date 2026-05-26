@@ -400,7 +400,7 @@ function App() {
           <div className="brand-card">
             <p className="eyebrow">BedBoard</p>
             <h1>Gestion des lits et des patients</h1>
-            <p className="subtitle">Interface claire pour gérer les lits, les patients et l’accès sur ce poste local.</p>
+            
             <div className="status-row">
               <span className="pill"><span className="dot" style={{ background: 'var(--green)' }} /> Libre</span>
               <span className="pill"><span className="dot" style={{ background: 'var(--blue)' }} /> Occupé</span>
@@ -473,23 +473,23 @@ function App() {
               <div className="controls-grid">
                 {authenticated ? (
                   <div className="form-card">
-                    <h2>Ajouter / assigner un patient</h2>
+                    <h2>Ajouter / assigner</h2>
                     <div className="form-grid">
-                      <label>
-                        Numéro d'inscription
-                        <input value={newPatient.registrationNumber} type="text" onChange={(event) => setNewPatient((current) => ({ ...current, registrationNumber: event.target.value }))} />
-                      </label>
-                      <label>
-                        Nom du patient
-                        <input value={newPatient.name} type="text" onChange={(event) => setNewPatient((current) => ({ ...current, name: event.target.value }))} />
-                      </label>
-                      <label>
-                        Lit cible
-                        <input value={newPatient.bedNumber} type="number" min="1" onChange={(event) => setNewPatient((current) => ({ ...current, bedNumber: event.target.value }))} />
-                      </label>
-                      <button className="btn primary" type="button" onClick={savePatient}>Enregistrer</button>
+                        <label>
+                          Numéro
+                          <input value={newPatient.registrationNumber} type="text" onChange={(event) => setNewPatient((current) => ({ ...current, registrationNumber: event.target.value }))} />
+                        </label>
+                        <label>
+                          Nom
+                          <input value={newPatient.name} type="text" onChange={(event) => setNewPatient((current) => ({ ...current, name: event.target.value }))} />
+                        </label>
+                        <label>
+                          Lit
+                          <input value={newPatient.bedNumber} type="number" min="1" onChange={(event) => setNewPatient((current) => ({ ...current, bedNumber: event.target.value }))} />
+                        </label>
+                        <button className="btn primary" type="button" onClick={savePatient}>Enregistrer</button>
+                      </div>
                     </div>
-                  </div>
                 ) : (
                   <div className="form-card">
                     <h2>Liste des patients</h2>
@@ -497,8 +497,7 @@ function App() {
                   </div>
                 )}
                 <div className="form-card">
-                  <h2>Liste des patients</h2>
-                  <p className="small-note">Chaque patient affiche son numéro d'inscription et son lit attribué.</p>
+                  <h2>Patients</h2>
                 </div>
               </div>
               <div className="table-wrap">
@@ -520,31 +519,29 @@ function App() {
           {screen === 'patientview' ? (
             <div className="screen active">
               <div className="controls-grid">
-                <div className="form-card">
-                  <h2>Vue patient (publique)</h2>
-                  <p className="small-note">Affiche uniquement le numéro d'inscription et le lit attribué.</p>
-                </div>
               </div>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Numéro d'inscription</th>
-                      <th>Lit</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {patients.length ? patients.map(p => (
-                      <tr key={p.registrationNumber}>
-                        <td>{escapeText(p.registrationNumber)}</td>
-                        <td>{p.bedNumber ? `Lit ${p.bedNumber}` : 'Non assigné'}</td>
-                      </tr>
-                    )) : (
-                      <tr><td colSpan="2"><div className="empty">Aucun patient enregistré.</div></td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              <div className="patient-full">
+                    {(() => {
+                      // next patient: prefer assigned (earliest assignedAt), otherwise first unassigned
+                      const assigned = patients.filter(p => p.status === 'assigned' && p.bedNumber).sort((a,b)=> {
+                        const ta = a.assignedAt ? new Date(a.assignedAt).getTime() : 0;
+                        const tb = b.assignedAt ? new Date(b.assignedAt).getTime() : 0;
+                        return ta - tb;
+                      });
+                      let next = null;
+                      if (assigned.length) next = assigned[0];
+                      else {
+                        const unassigned = patients.filter(p => !p.bedNumber).sort((a,b)=> (a.registrationNumber||'').localeCompare(b.registrationNumber||''));
+                        if (unassigned.length) next = unassigned[0];
+                      }
+                      if (!next) return <div className="empty">Aucun patient.</div>;
+                      return (
+                        <div className="patient-center">
+                          <div className="patient-line">Patient {escapeText(next.registrationNumber)} — Lit {next.bedNumber || '—'}</div>
+                        </div>
+                      );
+                    })()}
+                  </div>
             </div>
           ) : null}
 
@@ -620,8 +617,8 @@ function App() {
       </div>
 
       <div className={`modal-backdrop ${modalOpen ? 'open' : ''}`} aria-hidden={!modalOpen}>
-        <div className="modal section-card">
-          <h2>Connexion administrateur</h2>
+          <div className="modal section-card">
+          <h2>Connexion</h2>
           <p className="small-note">{authMessage}</p>
           <div className="modal-grid">
             <label>

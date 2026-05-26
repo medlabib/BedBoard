@@ -1,0 +1,17 @@
+node_modules/
+dist/
+frontend/dist/
+*.exe
+*.zip
+release/
+*.db
+*.log
+.env
+/.vscode/
+/.idea/
+*.test
+/.DS_Store
+coverage/
+vendor/
+npm-debug.log
+package-lock.json
