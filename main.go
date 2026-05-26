@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -241,8 +242,10 @@ func main() {
 		}
 	}
 
+	handler := app.withSecurityHeaders(mux)
+
 	log.Printf("BedBoard listening on http://localhost%s", serverAddr)
-	if err := http.ListenAndServe(serverAddr, mux); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := http.ListenAndServe(serverAddr, handler); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("listen: %v", err)
 	}
 }
@@ -347,9 +350,15 @@ func (a *App) handleAuth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req authRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	req.Username = strings.TrimSpace(req.Username)
+	if len(req.Username) > 64 || len(req.Password) > 256 {
+		http.Error(w, "invalid credentials", http.StatusBadRequest)
 		return
 	}
 	if req.Username == "" {
@@ -379,8 +388,10 @@ func (a *App) handleAuth(w http.ResponseWriter, r *http.Request) {
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteStrictMode,
 		Expires:  session.ExpiresAt,
+		MaxAge:   int(sessionDuration.Seconds()),
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "authenticated": true, "username": user.Username, "admin": user.Username == defaultUsername})
 }
@@ -411,6 +422,7 @@ func (a *App) handleUsers(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"users": views})
 	case http.MethodPost:
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		var req userRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid json", http.StatusBadRequest)
@@ -420,6 +432,10 @@ func (a *App) handleUsers(w http.ResponseWriter, r *http.Request) {
 		password := strings.TrimSpace(req.Password)
 		if username == "" || password == "" {
 			http.Error(w, "username and password required", http.StatusBadRequest)
+			return
+		}
+		if len(username) > 64 || len(password) < 8 || len(password) > 256 {
+			http.Error(w, "invalid username or password policy", http.StatusBadRequest)
 			return
 		}
 		var existing AdminUser
@@ -493,6 +509,7 @@ func (a *App) handleStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req statusRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
@@ -538,6 +555,7 @@ func (a *App) handleConfigBed(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req bedRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
@@ -571,6 +589,7 @@ func (a *App) handleBedsCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req bedRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
@@ -604,6 +623,7 @@ func (a *App) handleBedsDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req bedRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
@@ -632,6 +652,7 @@ func (a *App) handleBedsDelete(w http.ResponseWriter, r *http.Request) {
 func (a *App) handlePatients(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 		var req patientRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid json", http.StatusBadRequest)
@@ -658,6 +679,7 @@ func (a *App) handlePatientsArchive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req struct {
 		RegistrationNumber string `json:"registrationNumber"`
 		Action             string `json:"action"`
@@ -1021,18 +1043,55 @@ func (a *App) withCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 		if origin != "" {
+			if !sameOrigin(origin, r.Host) && !isAllowedOrigin(origin) {
+				http.Error(w, "forbidden origin", http.StatusForbidden)
+				return
+			}
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
-		} else {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
 		}
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		next(w, r)
 	}
+}
+
+func (a *App) withSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self';")
+		next.ServeHTTP(w, r)
+	})
+}
+
+func sameOrigin(origin, host string) bool {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	if u.Host == "" {
+		return false
+	}
+	return strings.EqualFold(u.Host, host)
+}
+
+func isAllowedOrigin(origin string) bool {
+	allow := strings.TrimSpace(os.Getenv("CORS_ALLOW_ORIGIN"))
+	if allow == "" {
+		return false
+	}
+	for _, candidate := range strings.Split(allow, ",") {
+		if strings.EqualFold(strings.TrimSpace(candidate), origin) {
+			return true
+		}
+	}
+	return false
 }

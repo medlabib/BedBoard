@@ -1,0 +1,106 @@
+name: Release Signed (Optional)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to publish (example: v1.0.1)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  build-sign-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Build unsigned Windows binary
+        run: |
+          mkdir -p release
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o release/BedBoard_windows_amd64.exe .
+
+      - name: Build Linux binary
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o release/BedBoard_linux_amd64 .
+          tar -czf release/BedBoard_linux_amd64.tar.gz -C release BedBoard_linux_amd64
+
+      - name: Install signing tool
+        if: ${{ secrets.WINDOWS_CERT_BASE64 != '' && secrets.WINDOWS_CERT_PASSWORD != '' }}
+        run: sudo apt-get update && sudo apt-get install -y osslsigncode
+
+      - name: Sign executable (optional)
+        env:
+          WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+          TIMESTAMP_URL: ${{ secrets.TIMESTAMP_URL }}
+          SIGNING_SUBJECT: ${{ secrets.SIGNING_SUBJECT }}
+        run: bash scripts/sign-windows.sh release/BedBoard_windows_amd64.exe
+
+      - name: Package ZIP
+        run: |
+          rm -f release/BedBoard_windows_amd64.zip
+          zip -j release/BedBoard_windows_amd64.zip release/BedBoard_windows_amd64.exe
+
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum BedBoard_windows_amd64.exe BedBoard_windows_amd64.zip BedBoard_linux_amd64 BedBoard_linux_amd64.tar.gz > checksums.txt
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.5.0
+
+      - name: Keyless sign release artifacts
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cosign sign-blob --yes --output-signature release/BedBoard_windows_amd64.exe.sig --output-certificate release/BedBoard_windows_amd64.exe.pem release/BedBoard_windows_amd64.exe
+          cosign sign-blob --yes --output-signature release/BedBoard_windows_amd64.zip.sig --output-certificate release/BedBoard_windows_amd64.zip.pem release/BedBoard_windows_amd64.zip
+          cosign sign-blob --yes --output-signature release/BedBoard_linux_amd64.sig --output-certificate release/BedBoard_linux_amd64.pem release/BedBoard_linux_amd64
+          cosign sign-blob --yes --output-signature release/BedBoard_linux_amd64.tar.gz.sig --output-certificate release/BedBoard_linux_amd64.tar.gz.pem release/BedBoard_linux_amd64.tar.gz
+          cosign sign-blob --yes --output-signature release/checksums.txt.sig --output-certificate release/checksums.txt.pem release/checksums.txt
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          files: |
+            release/BedBoard_linux_amd64
+            release/BedBoard_linux_amd64.tar.gz
+            release/BedBoard_windows_amd64.zip
+            release/BedBoard_windows_amd64.exe
+            release/checksums.txt
+            release/BedBoard_windows_amd64.exe.sig
+            release/BedBoard_windows_amd64.exe.pem
+            release/BedBoard_windows_amd64.zip.sig
+            release/BedBoard_windows_amd64.zip.pem
+            release/BedBoard_linux_amd64.sig
+            release/BedBoard_linux_amd64.pem
+            release/BedBoard_linux_amd64.tar.gz.sig
+            release/BedBoard_linux_amd64.tar.gz.pem
+            release/checksums.txt.sig
+            release/checksums.txt.pem
+          generate_release_notes: true

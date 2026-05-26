@@ -14,4 +14,6 @@ release/
 coverage/
 vendor/
 npm-debug.log
-package-lock.json
+bedboard
+suivi-urgences
+frontend/node_modules/
