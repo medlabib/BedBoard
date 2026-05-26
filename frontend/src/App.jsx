@@ -51,6 +51,7 @@ function loadCachedState() {
 
 function App() {
   const cached = loadCachedState();
+  const [isPatientPage, setIsPatientPage] = useState(() => window.location.pathname === '/patient-view');
   const [beds, setBeds] = useState(cached?.beds || []);
   const [patients, setPatients] = useState(cached?.patients || []);
   const [stats, setStats] = useState(cached?.stats || initialStats);
@@ -73,6 +74,7 @@ function App() {
   const [bedEdits, setBedEdits] = useState({});
   const [auditLogs, setAuditLogs] = useState([]);
   const [lastBackupFile, setLastBackupFile] = useState('');
+  const [notice, setNotice] = useState({ type: '', text: '' });
 
   const isAdmin = user.admin;
 
@@ -84,6 +86,15 @@ function App() {
     });
     return response;
   };
+
+  const readErrorMessage = async (response, fallback) => {
+    const message = await response.text().catch(() => '');
+    const clean = String(message || '').trim();
+    return clean || fallback;
+  };
+
+  const showError = (text) => setNotice({ type: 'error', text });
+  const showSuccess = (text) => setNotice({ type: 'success', text });
 
   const refreshUsers = async () => {
     if (!isAdmin) {
@@ -207,6 +218,14 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const onPopState = () => {
+      setIsPatientPage(window.location.pathname === '/patient-view');
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  useEffect(() => {
     const next = { beds, patients, stats, savedAt: new Date().toISOString() };
     localStorage.setItem('bedboard_state_cache', JSON.stringify(next));
   }, [beds, patients, stats]);
@@ -227,14 +246,14 @@ function App() {
 
   // auto-rotate patientview entries when visible
   useEffect(() => {
-    if (screen !== 'patientview') return;
+    if (screen !== 'patientview' && !isPatientPage) return;
     const rot = setInterval(() => {
       const list = patients.filter(p => p.status === 'assigned' || !p.bedNumber);
       if (!list.length) return;
       setPvIndex((i) => (i + 1) % list.length);
     }, 8000);
     return () => clearInterval(rot);
-  }, [screen, patients]);
+  }, [screen, patients, isPatientPage]);
 
   const renderBeds = useMemo(() => {
     if (!beds.length) {
@@ -279,10 +298,15 @@ function App() {
                   disabled={!authenticated}
                   onClick={async () => {
                     if (!authenticated) return;
-                    await api('/api/status', {
+                    const response = await api('/api/status', {
                       method: 'POST',
                       body: JSON.stringify({ number: bed.number, status }),
                     });
+                    if (!response.ok) {
+                      showError(await readErrorMessage(response, 'Mise à jour état lit impossible.'));
+                      return;
+                    }
+                    showSuccess(`Lit ${bed.number} mis à jour: ${statusMeta[status].label}.`);
                   }}
                 >
                   {statusMeta[status].label}
@@ -295,10 +319,15 @@ function App() {
                 type="button"
                 onClick={async () => {
                   setConfirm({ open: true, title: 'Supprimer le lit', message: `Supprimer le lit ${bed.number} ?`, onConfirm: async () => {
-                    await api('/api/beds/delete', {
+                    const response = await api('/api/beds/delete', {
                       method: 'POST',
                       body: JSON.stringify({ number: bed.number }),
                     });
+                    if (!response.ok) {
+                      showError(await readErrorMessage(response, 'Suppression du lit impossible.'));
+                      return;
+                    }
+                    showSuccess(`Lit ${bed.number} supprimé.`);
                     setConfirm((current) => ({ ...current, open: false }));
                   } });
                 }}
@@ -319,13 +348,21 @@ function App() {
                 </select>
                 <button className="mini-btn" type="button" onClick={async () => {
                   const reg = assignByBed[bed.number];
-                  if (!reg) return;
+                  if (!reg) {
+                    showError('Sélectionnez un patient avant affectation.');
+                    return;
+                  }
                   const selectedPatient = patients.find((p) => p.registrationNumber === reg);
-                  await api('/api/patients', {
+                  const response = await api('/api/patients', {
                     method: 'POST',
                     body: JSON.stringify({ registrationNumber: reg, name: selectedPatient?.name || '', bedNumber: bed.number }),
                   });
+                  if (!response.ok) {
+                    showError(await readErrorMessage(response, 'Affectation patient impossible.'));
+                    return;
+                  }
                   setAssignByBed((current) => ({ ...current, [bed.number]: '' }));
+                  showSuccess(`Patient ${reg} affecté au lit ${bed.number}.`);
                 }}>Affecter</button>
               </div>
             ) : null}
@@ -363,15 +400,20 @@ function App() {
                   type="button"
                   onClick={async () => {
                     const next = bedEdits[bed.number] || { name: bed.name, type: bed.type };
-                    await api('/api/config-bed', {
+                    const response = await api('/api/config-bed', {
                       method: 'POST',
                       body: JSON.stringify({ number: bed.number, name: next.name, type: next.type }),
                     });
+                    if (!response.ok) {
+                      showError(await readErrorMessage(response, 'Configuration lit impossible.'));
+                      return;
+                    }
                     setBedEdits((current) => {
                       const copy = { ...current };
                       delete copy[bed.number];
                       return copy;
                     });
+                    showSuccess(`Configuration du lit ${bed.number} enregistrée.`);
                   }}
                 >
                   Enregistrer
@@ -410,7 +452,12 @@ function App() {
               }}>Réassigner</button>
               <button className="mini-btn" type="button" onClick={() => {
                 setConfirm({ open: true, title: 'Archiver le patient', message: `Archiver le patient ${patient.registrationNumber} ?`, onConfirm: async () => {
-                  await api('/api/patients/archive', { method: 'POST', body: JSON.stringify({ registrationNumber: patient.registrationNumber, action: 'archive' }) });
+                  const response = await api('/api/patients/archive', { method: 'POST', body: JSON.stringify({ registrationNumber: patient.registrationNumber, action: 'archive' }) });
+                  if (!response.ok) {
+                    showError(await readErrorMessage(response, 'Archivage patient impossible.'));
+                    return;
+                  }
+                  showSuccess(`Patient ${patient.registrationNumber} archivé.`);
                   setConfirm((current) => ({ ...current, open: false }));
                 } });
               }}>Archiver</button>
@@ -464,7 +511,10 @@ function App() {
     });
     if (response.ok) {
       setNewBed({ number: '', name: '', type: 'standard' });
+      showSuccess('Lit créé.');
+      return;
     }
+    showError(await readErrorMessage(response, 'Création lit impossible.'));
   };
 
   const savePatient = async () => {
@@ -478,7 +528,10 @@ function App() {
     });
     if (response.ok) {
       setNewPatient({ registrationNumber: '', name: '', bedNumber: '' });
+      showSuccess('Patient enregistré.');
+      return;
     }
+    showError(await readErrorMessage(response, 'Enregistrement patient impossible.'));
   };
 
   const authenticate = async () => {
@@ -493,13 +546,17 @@ function App() {
       setAuthenticated(true);
       setUser({ username: data.username || authForm.username || 'admin', admin: Boolean(data.admin) });
       setModalOpen(false);
+      setAuthForm((current) => ({ ...current, password: '' }));
       setConnectionState(data.username ? `Connecté: ${data.username}` : 'Connecté.');
+      showSuccess('Connexion réussie.');
       if (data.admin) {
         await refreshUsers();
       }
       return;
     }
-    setAuthMessage('Identifiants invalides.');
+    const message = await readErrorMessage(response, 'Identifiants invalides.');
+    setAuthMessage(message);
+    showError(message);
   };
 
   const logout = async () => {
@@ -508,6 +565,7 @@ function App() {
     setUser({ username: '', admin: false });
     setUsers([]);
     setConnectionState('Accès local');
+    showSuccess('Déconnexion effectuée.');
   };
 
   const createUser = async () => {
@@ -518,18 +576,19 @@ function App() {
     if (response.ok) {
       setNewUser({ username: '', password: '' });
       await refreshUsers();
+      showSuccess('Utilisateur créé.');
       return;
     }
-    setConnectionState('Création utilisateur impossible.');
+    showError(await readErrorMessage(response, 'Création utilisateur impossible.'));
   };
 
   const changeOwnPassword = async () => {
     if (!passwordForm.currentPassword || !passwordForm.newPassword) {
-      setConnectionState('Mot de passe actuel et nouveau requis.');
+      showError('Mot de passe actuel et nouveau requis.');
       return;
     }
     if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-      setConnectionState('Confirmation du nouveau mot de passe invalide.');
+      showError('Confirmation du nouveau mot de passe invalide.');
       return;
     }
     const response = await api('/api/users/password', {
@@ -541,21 +600,21 @@ function App() {
     });
     if (response.ok) {
       setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
-      setConnectionState('Mot de passe mis à jour.');
+      showSuccess('Mot de passe mis à jour.');
       return;
     }
     const message = await response.text().catch(() => 'Changement de mot de passe impossible.');
-    setConnectionState(message || 'Changement de mot de passe impossible.');
+    showError(message || 'Changement de mot de passe impossible.');
   };
 
   const resetUserPassword = async () => {
     if (!isAdmin) return;
     if (!resetPasswordForm.username || !resetPasswordForm.newPassword) {
-      setConnectionState('Utilisateur et nouveau mot de passe requis.');
+      showError('Utilisateur et nouveau mot de passe requis.');
       return;
     }
     if (resetPasswordForm.newPassword !== resetPasswordForm.confirmPassword) {
-      setConnectionState('Confirmation du nouveau mot de passe invalide.');
+      showError('Confirmation du nouveau mot de passe invalide.');
       return;
     }
     const response = await api('/api/users/password', {
@@ -567,11 +626,11 @@ function App() {
     });
     if (response.ok) {
       setResetPasswordForm({ username: '', newPassword: '', confirmPassword: '' });
-      setConnectionState('Mot de passe utilisateur mis à jour.');
+      showSuccess('Mot de passe utilisateur mis à jour.');
       return;
     }
     const message = await response.text().catch(() => 'Réinitialisation mot de passe impossible.');
-    setConnectionState(message || 'Réinitialisation mot de passe impossible.');
+    showError(message || 'Réinitialisation mot de passe impossible.');
   };
 
   const openSettings = async () => {
@@ -584,16 +643,24 @@ function App() {
     setScreen('account');
   };
 
+  const openPatientPage = () => {
+    window.location.assign('/patient-view');
+  };
+
+  const openMainPage = () => {
+    window.location.assign('/');
+  };
+
   const createBackup = async () => {
     if (!isAdmin) return;
     const response = await api('/api/admin/backup', { method: 'POST', body: JSON.stringify({}) });
     if (!response.ok) {
-      setConnectionState('Sauvegarde impossible.');
+      showError(await readErrorMessage(response, 'Sauvegarde impossible.'));
       return;
     }
     const data = await response.json().catch(() => ({}));
     setLastBackupFile(data.file || '');
-    setConnectionState('Sauvegarde SQLite créée.');
+    showSuccess('Sauvegarde SQLite créée.');
     await refreshAudit();
   };
 
@@ -606,17 +673,59 @@ function App() {
       onConfirm: async () => {
         const response = await api('/api/admin/restore', { method: 'POST', body: JSON.stringify({}) });
         if (!response.ok) {
-          setConnectionState('Restauration impossible.');
+          showError(await readErrorMessage(response, 'Restauration impossible.'));
           return;
         }
         const data = await response.json().catch(() => ({}));
         setLastBackupFile(data.file || '');
         await refreshState();
         await refreshAudit();
-        setConnectionState('Restauration SQLite terminée.');
+        showSuccess('Restauration SQLite terminée.');
       },
     });
   };
+
+  const patientPanel = useMemo(() => {
+    const assigned = patients.filter(p => p.status === 'assigned' && p.bedNumber).sort((a, b) => {
+      const ta = a.assignedAt ? new Date(a.assignedAt).getTime() : 0;
+      const tb = b.assignedAt ? new Date(b.assignedAt).getTime() : 0;
+      return ta - tb;
+    });
+    const list = assigned.length
+      ? assigned
+      : (patients.filter(p => !p.bedNumber).length ? patients.filter(p => !p.bedNumber) : patients);
+    if (!list.length) return <div className="empty">Aucun patient.</div>;
+    const current = list[pvIndex % list.length];
+    return (
+      <div className="patient-center">
+        <div className="patient-line">Patient {escapeText(current.registrationNumber)} — Lit {current.bedNumber || '—'}</div>
+      </div>
+    );
+  }, [patients, pvIndex]);
+
+  if (isPatientPage) {
+    return (
+      <div className="app patient-page-shell">
+        <div className="navbar">
+          <div className="nav-left">
+            <div className="brand-mark"><img src="/logo.png" alt="Logo de l'hôpital" /></div>
+            <div className="nav-title">
+              <strong>BedBoard - Vue patient</strong>
+              <span>Affichage salle d'attente</span>
+            </div>
+          </div>
+          <div className="nav-actions">
+            <button className="btn" type="button" onClick={openMainPage}>Retour tableau</button>
+          </div>
+        </div>
+        <div className="section-card patient-page-card">
+          <div className="patient-full">
+            {patientPanel}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="app">
@@ -630,11 +739,14 @@ function App() {
         </div>
         <div className="nav-actions">
           {authenticated && user.username ? <div className="user-chip">{user.username}</div> : null}
+          <button className="btn" type="button" onClick={openPatientPage}>Page patient</button>
           {authenticated && isAdmin ? <button className="btn" type="button" onClick={openSettings}>Paramètres</button> : null}
           {!authenticated ? <button className="btn" type="button" onClick={() => setModalOpen(true)}>Se connecter</button> : null}
           {authenticated ? <button className="btn primary" type="button" onClick={logout}>Déconnexion</button> : null}
         </div>
       </div>
+
+      {notice.text ? <div className={`notice ${notice.type === 'error' ? 'error' : 'success'}`}>{notice.text}</div> : null}
 
       <div className="shell">
         <div className="hero">
@@ -663,7 +775,6 @@ function App() {
           <div className="tab-strip">
             <button className={`tab-btn ${screen === 'beds' ? 'active' : ''}`} type="button" onClick={() => setScreen('beds')}>Lits</button>
             <button className={`tab-btn ${screen === 'patients' ? 'active' : ''}`} type="button" onClick={() => setScreen('patients')}>Patients</button>
-            <button className={`tab-btn ${screen === 'patientview' ? 'active' : ''}`} type="button" onClick={() => setScreen('patientview')}>Vue patient</button>
             {authenticated ? <button className={`tab-btn ${screen === 'stats' ? 'active' : ''}`} type="button" onClick={() => setScreen('stats')}>Statistiques</button> : null}
             {authenticated ? <button className={`tab-btn ${screen === 'account' ? 'active' : ''}`} type="button" onClick={openAccount}>Mon compte</button> : null}
             {authenticated && isAdmin ? <button className={`tab-btn ${screen === 'settings' ? 'active' : ''}`} type="button" onClick={openSettings}>Paramètres</button> : null}
@@ -763,28 +874,7 @@ function App() {
               <div className="controls-grid">
               </div>
               <div className="patient-full">
-                    {(() => {
-                      // next patient: prefer assigned (earliest assignedAt), otherwise first unassigned
-                      const assigned = patients.filter(p => p.status === 'assigned' && p.bedNumber).sort((a,b)=> {
-                        const ta = a.assignedAt ? new Date(a.assignedAt).getTime() : 0;
-                        const tb = b.assignedAt ? new Date(b.assignedAt).getTime() : 0;
-                        return ta - tb;
-                      });
-                      let next = null;
-                      if (assigned.length) next = assigned[0];
-                      else {
-                        const unassigned = patients.filter(p => !p.bedNumber).sort((a,b)=> (a.registrationNumber||'').localeCompare(b.registrationNumber||''));
-                        if (unassigned.length) next = unassigned[0];
-                      }
-                      const list = assigned.length ? assigned : patients.filter(p => !p.bedNumber).length ? patients.filter(p => !p.bedNumber) : patients;
-                      if (!list.length) return <div className="empty">Aucun patient.</div>;
-                      const current = list[pvIndex % list.length];
-                      return (
-                        <div className="patient-center">
-                          <div className="patient-line">Patient {escapeText(current.registrationNumber)} — Lit {current.bedNumber || '—'}</div>
-                        </div>
-                      );
-                    })()}
+                {patientPanel}
                   </div>
             </div>
           ) : null}
