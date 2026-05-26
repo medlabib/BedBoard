@@ -130,7 +130,9 @@ Windows shows "Unknown publisher" when the executable does not contain a trusted
   - `WINDOWS_CERT_BASE64`
   - `WINDOWS_CERT_PASSWORD`
 
-The release workflow now fails if this certificate-based signing is missing, so unsigned Windows releases are no longer published by accident.
+If these secrets are missing, the release workflow now generates a temporary self-signed certificate fallback so Authenticode signing still happens.
+
+Important: this fallback is for testing pipelines only. To avoid SmartScreen/UAC trust warnings on user machines, use a trusted OV/EV certificate via the secrets above.
 
 ## API Overview
 

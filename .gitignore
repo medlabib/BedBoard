@@ -17,3 +17,4 @@ npm-debug.log
 bedboard
 suivi-urgences
 frontend/node_modules/
+.signing/

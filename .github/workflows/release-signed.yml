@@ -51,6 +51,22 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o release/BedBoard_linux_amd64 .
           tar -czf release/BedBoard_linux_amd64.tar.gz -C release BedBoard_linux_amd64
 
+      - name: Generate self-signed cert fallback
+        if: ${{ env.WINDOWS_CERT_BASE64 == '' || env.WINDOWS_CERT_PASSWORD == '' }}
+        run: |
+          mkdir -p .signing
+          openssl req -x509 -newkey rsa:4096 -sha256 -days 825 -nodes \
+            -subj "/CN=Labib/O=Labib/C=MA" \
+            -keyout .signing/labib.key \
+            -out .signing/labib.crt
+          PASS="$(openssl rand -hex 24)"
+          openssl pkcs12 -export -out .signing/labib.pfx -inkey .signing/labib.key -in .signing/labib.crt -passout pass:"$PASS"
+          echo "WINDOWS_CERT_BASE64=$(base64 -w 0 .signing/labib.pfx)" >> "$GITHUB_ENV"
+          echo "WINDOWS_CERT_PASSWORD=$PASS" >> "$GITHUB_ENV"
+          if [[ -z "${SIGNING_SUBJECT:-}" ]]; then
+            echo "SIGNING_SUBJECT=Labib" >> "$GITHUB_ENV"
+          fi
+
       - name: Install signing tool
         run: sudo apt-get update && sudo apt-get install -y osslsigncode
 
