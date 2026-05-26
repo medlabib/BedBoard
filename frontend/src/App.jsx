@@ -41,6 +41,7 @@ function App() {
   const [user, setUser] = useState({ username: '', admin: false });
   const [users, setUsers] = useState([]);
   const [screen, setScreen] = useState('beds');
+  const [pvIndex, setPvIndex] = useState(0);
   const [modalOpen, setModalOpen] = useState(false);
   const [authForm, setAuthForm] = useState({ username: 'admin', password: '' });
   const [authMessage, setAuthMessage] = useState('Connectez-vous pour gérer les lits et les patients sur ce poste.');
@@ -123,6 +124,17 @@ function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // auto-rotate patientview entries when visible
+  useEffect(() => {
+    if (screen !== 'patientview') return;
+    const rot = setInterval(() => {
+      const list = patients.filter(p => p.status === 'assigned' || !p.bedNumber);
+      if (!list.length) return;
+      setPvIndex((i) => (i + 1) % list.length);
+    }, 8000);
+    return () => clearInterval(rot);
+  }, [screen, patients]);
 
   const renderBeds = useMemo(() => {
     if (!beds.length) {
@@ -534,10 +546,12 @@ function App() {
                         const unassigned = patients.filter(p => !p.bedNumber).sort((a,b)=> (a.registrationNumber||'').localeCompare(b.registrationNumber||''));
                         if (unassigned.length) next = unassigned[0];
                       }
-                      if (!next) return <div className="empty">Aucun patient.</div>;
+                      const list = assigned.length ? assigned : patients.filter(p => !p.bedNumber).length ? patients.filter(p => !p.bedNumber) : patients;
+                      if (!list.length) return <div className="empty">Aucun patient.</div>;
+                      const current = list[pvIndex % list.length];
                       return (
-                        <div className="patient-center">
-                          <div className="patient-line">Patient {escapeText(next.registrationNumber)} — Lit {next.bedNumber || '—'}</div>
+                        <div className={`patient-center ${'fade-out'}`}>
+                          <div className="patient-line">Patient {escapeText(current.registrationNumber)} — Lit {current.bedNumber || '—'}</div>
                         </div>
                       );
                     })()}

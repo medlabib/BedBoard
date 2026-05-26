@@ -53,17 +53,17 @@ type Bed struct {
 }
 
 type Patient struct {
-	ID                 uint      `gorm:"primaryKey" json:"-"`
-	RegistrationNumber string    `gorm:"uniqueIndex;not null" json:"registrationNumber"`
-	Name               string    `json:"name"`
-	BedID              *uint     `json:"-"`
-	Status             string    `json:"status"`
+	ID                 uint       `gorm:"primaryKey" json:"-"`
+	RegistrationNumber string     `gorm:"uniqueIndex;not null" json:"registrationNumber"`
+	Name               string     `json:"name"`
+	BedID              *uint      `json:"-"`
+	Status             string     `json:"status"`
 	AssignedAt         *time.Time `json:"assignedAt"`
 	ConsultedAt        *time.Time `json:"consultedAt"`
 	ArchivedAt         *time.Time `json:"archivedAt"`
 	ExitAt             *time.Time `json:"exitAt"`
-	CreatedAt          time.Time `json:"-"`
-	UpdatedAt          time.Time `json:"-"`
+	CreatedAt          time.Time  `json:"-"`
+	UpdatedAt          time.Time  `json:"-"`
 }
 
 type AdminUser struct {
@@ -166,16 +166,16 @@ type patientView struct {
 }
 
 type statsView struct {
-	TotalBeds     int `json:"totalBeds"`
-	FreeBeds      int `json:"freeBeds"`
-	OccupiedBeds  int `json:"occupiedBeds"`
-	CleaningBeds  int `json:"cleaningBeds"`
-	AlertBeds     int `json:"alertBeds"`
-	TotalPatients int `json:"totalPatients"`
-	ArchivedPatients int                    `json:"archivedPatients"`
-	ConsultationsByDate []map[string]any    `json:"consultationsByDate"`
+	TotalBeds              int              `json:"totalBeds"`
+	FreeBeds               int              `json:"freeBeds"`
+	OccupiedBeds           int              `json:"occupiedBeds"`
+	CleaningBeds           int              `json:"cleaningBeds"`
+	AlertBeds              int              `json:"alertBeds"`
+	TotalPatients          int              `json:"totalPatients"`
+	ArchivedPatients       int              `json:"archivedPatients"`
+	ConsultationsByDate    []map[string]any `json:"consultationsByDate"`
 	AvgConsultationMinutes float64          `json:"avgConsultationMinutes"`
-	TotalConsultations int                    `json:"totalConsultations"`
+	TotalConsultations     int              `json:"totalConsultations"`
 }
 
 func main() {
@@ -230,7 +230,7 @@ func main() {
 	mux.HandleFunc("/api/beds", app.withCORS(app.requireAuth(app.handleBedsCreate)))
 	mux.HandleFunc("/api/beds/delete", app.withCORS(app.requireAuth(app.requireAdmin(app.handleBedsDelete))))
 	mux.HandleFunc("/api/patients", app.withCORS(app.requireAuth(app.handlePatients)))
-    mux.HandleFunc("/api/patients/archive", app.withCORS(app.requireAuth(app.handlePatientsArchive)))
+	mux.HandleFunc("/api/patients/archive", app.withCORS(app.requireAuth(app.handlePatientsArchive)))
 
 	serverAddr := defaultPort
 	if port := strings.TrimSpace(os.Getenv("PORT")); port != "" {
@@ -658,9 +658,9 @@ func (a *App) handlePatientsArchive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var req struct{
+	var req struct {
 		RegistrationNumber string `json:"registrationNumber"`
-		Action string `json:"action"`
+		Action             string `json:"action"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)

@@ -300,10 +300,18 @@ h1 {
 }
 .patient-line {
   font-size: clamp(2rem, 6vw, 6rem);
-  font-weight: 700;
+  font-weight: 800;
   text-align: center;
-  color: var(--text);
+  color: #111216;
+  font-family: 'Segoe UI', Roboto, -apple-system, system-ui, 'Helvetica Neue', Arial;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
+
+/* auto-rotate: fade between patients */
+.patient-center { position: relative; }
+.patient-center .patient-line { transition: opacity 0.8s ease; }
+.patient-center.fade-out .patient-line { opacity: 0; }
 
 .screen {
   display: grid;
