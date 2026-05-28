@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -46,7 +47,8 @@ func (a *App) bootstrapData() error {
 		}
 		password := strings.TrimSpace(os.Getenv("ADMIN_INIT_PASSWORD"))
 		if password == "" {
-			return fmt.Errorf("ADMIN_INIT_PASSWORD is required to bootstrap the first admin user")
+			password = insecureDefaultBootstrapPassword
+			log.Printf("WARNING: ADMIN_INIT_PASSWORD not set. Using insecure default bootstrap password. Change immediately after first login.")
 		}
 		hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		if err != nil {

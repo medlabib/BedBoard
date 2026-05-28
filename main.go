@@ -7,6 +7,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -18,24 +20,66 @@ import (
 var embeddedFiles embed.FS
 
 const (
-	defaultPort       = ":8080"
-	dbFileName        = "bedboard.db"
-	backupDirName     = "backups"
-	sessionCookieName = "bedboard_session"
-	sessionDuration   = 7 * 24 * time.Hour
-	defaultUsername   = "admin"
-	defaultBedType    = "standard"
-	thoracicBedType   = "thoracique"
-	statusFree        = "libre"
-	statusOccupied    = "occupé"
-	statusCleaning    = "nettoyage"
-	statusAlert       = "alerte"
-	roleAdmin         = "admin"
-	roleUser          = "user"
-	roleReception     = "reception"
-	roleTriage        = "triage"
-	roleDechocage     = "dechocage"
+	defaultPort                      = ":8080"
+	defaultDBFileBaseName            = "bedboard.db"
+	defaultBackupDirBaseName         = "backups"
+	insecureDefaultBootstrapPassword = "ChangeMe!123"
+	sessionCookieName                = "bedboard_session"
+	sessionDuration                  = 7 * 24 * time.Hour
+	defaultUsername                  = "admin"
+	defaultBedType                   = "standard"
+	thoracicBedType                  = "thoracique"
+	statusFree                       = "libre"
+	statusOccupied                   = "occupé"
+	statusCleaning                   = "nettoyage"
+	statusAlert                      = "alerte"
+	roleAdmin                        = "admin"
+	roleUser                         = "user"
+	roleReception                    = "reception"
+	roleTriage                       = "triage"
+	roleDechocage                    = "dechocage"
 )
+
+var (
+	dataDirPath   string
+	dbFileName    string
+	backupDirName string
+)
+
+func resolveDataPaths() error {
+	if dbFileName != "" && backupDirName != "" {
+		return nil
+	}
+
+	baseDir := strings.TrimSpace(os.Getenv("BEDBOARD_DATA_DIR"))
+	if baseDir == "" {
+		if runtime.GOOS == "windows" {
+			configDir, err := os.UserConfigDir()
+			if err != nil {
+				homeDir, homeErr := os.UserHomeDir()
+				if homeErr != nil {
+					return err
+				}
+				configDir = filepath.Join(homeDir, "AppData", "Roaming")
+			}
+			baseDir = filepath.Join(configDir, "BedBoard")
+		} else {
+			baseDir = "."
+		}
+	}
+
+	if err := os.MkdirAll(baseDir, 0o700); err != nil {
+		return err
+	}
+	if err := ensurePrivateDirPermissions(baseDir); err != nil {
+		return err
+	}
+
+	dataDirPath = baseDir
+	dbFileName = filepath.Join(baseDir, defaultDBFileBaseName)
+	backupDirName = filepath.Join(baseDir, defaultBackupDirBaseName)
+	return nil
+}
 
 type Bed struct {
 	ID          uint      `gorm:"primaryKey" json:"-"`
@@ -236,6 +280,11 @@ type statsView struct {
 }
 
 func main() {
+	if err := resolveDataPaths(); err != nil {
+		log.Fatalf("resolve data paths: %v", err)
+	}
+	log.Printf("BedBoard data directory: %s", dataDirPath)
+
 	app := &App{clients: make(map[chan string]struct{}), bedLocks: make(map[int]*sync.Mutex)}
 	if err := app.initDatabase(); err != nil {
 		log.Fatalf("init database: %v", err)
