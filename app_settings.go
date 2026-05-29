@@ -34,6 +34,7 @@ const (
 	settingHSTSIncludeSubdomains = "security.hsts_include_subdomains"
 	settingHSTSPreload           = "security.hsts_preload"
 	settingGotifyTokenEncKey     = "security.gotify_token_enc_key"
+	settingTriageSLAMinutes      = "security.triage_sla_minutes"
 	encryptedSecretPrefix        = "enc:v1:"
 )
 
@@ -47,6 +48,7 @@ type securityConfigView struct {
 	HSTSIncludeSubdomains       bool   `json:"hstsIncludeSubdomains"`
 	HSTSPreload                 bool   `json:"hstsPreload"`
 	GotifyTokenEncKeyConfigured bool   `json:"gotifyTokenEncKeyConfigured"`
+	TriageSLAMinutes            int    `json:"triageSlaMinutes"`
 }
 
 type securityConfigRequest struct {
@@ -59,6 +61,7 @@ type securityConfigRequest struct {
 	HSTSIncludeSubdomains  bool   `json:"hstsIncludeSubdomains"`
 	HSTSPreload            bool   `json:"hstsPreload"`
 	GotifyTokenEncKey      string `json:"gotifyTokenEncKey"`
+	TriageSLAMinutes       int    `json:"triageSlaMinutes"`
 	ClearAdminInitPassword bool   `json:"clearAdminInitPassword"`
 	ClearGotifyTokenEncKey bool   `json:"clearGotifyTokenEncKey"`
 }
@@ -433,6 +436,7 @@ func (a *App) getSecurityConfigView() securityConfigView {
 		HSTSIncludeSubdomains:       a.getSettingBool(settingHSTSIncludeSubdomains, envBool("HSTS_INCLUDE_SUBDOMAINS", true)),
 		HSTSPreload:                 a.getSettingBool(settingHSTSPreload, envBool("HSTS_PRELOAD", false)),
 		GotifyTokenEncKeyConfigured: encKey != "",
+		TriageSLAMinutes:            a.getSettingInt(settingTriageSLAMinutes, envInt("TRIAGE_SLA_MINUTES", 15)),
 	}
 }
 
@@ -454,6 +458,13 @@ func (a *App) handleSecurityConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.HSTSMaxAge < 0 {
 			http.Error(w, "hsts max age must be >= 0", http.StatusBadRequest)
+			return
+		}
+		if req.TriageSLAMinutes == 0 {
+			req.TriageSLAMinutes = a.getSettingInt(settingTriageSLAMinutes, envInt("TRIAGE_SLA_MINUTES", 15))
+		}
+		if req.TriageSLAMinutes < 1 || req.TriageSLAMinutes > 240 {
+			http.Error(w, "triage SLA minutes must be 1..240", http.StatusBadRequest)
 			return
 		}
 		if err := a.upsertSettingValue(settingAdminInitUsername, username); err != nil {
@@ -492,6 +503,10 @@ func (a *App) handleSecurityConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := a.upsertSettingValue(settingHSTSPreload, strconv.FormatBool(req.HSTSPreload)); err != nil {
+			http.Error(w, "save failed", http.StatusInternalServerError)
+			return
+		}
+		if err := a.upsertSettingValue(settingTriageSLAMinutes, strconv.Itoa(req.TriageSLAMinutes)); err != nil {
 			http.Error(w, "save failed", http.StatusInternalServerError)
 			return
 		}

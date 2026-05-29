@@ -987,6 +987,10 @@ tr:last-child td { border-bottom: none; }
 .triage-row.triage-3 td:first-child::before { background: #ff7043; }
 .triage-row.triage-4 td:first-child::before { background: #e53935; }
 
+.patients-table tbody tr {
+  cursor: pointer;
+}
+
 @media (max-width: 1200px) {
   .hero,
   .controls-grid,

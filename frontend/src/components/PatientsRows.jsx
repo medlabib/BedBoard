@@ -16,13 +16,15 @@ export default function PatientsRows({
   showSuccess,
   readErrorMessage,
   setPatients,
+  setSelectedPatientReg,
+  refreshPatientEvents,
   escapeText,
   locale,
 }) {
   if (!activePatients.length) {
     return (
       <tr>
-        <td colSpan={canViewPatientType ? 6 : 5}><div className="empty">{tr(locale, 'Aucun patient enregistre.', 'No patient registered.', 'لا يوجد مرضى مسجلون.')}</div></td>
+        <td colSpan={canViewPatientType ? 7 : 6}><div className="empty">{tr(locale, 'Aucun patient enregistre.', 'No patient registered.', 'لا يوجد مرضى مسجلون.')}</div></td>
       </tr>
     );
   }
@@ -31,13 +33,21 @@ export default function PatientsRows({
     const level = triageLevelOf(patient);
     const triage = triageMeta[level] || triageMeta[0];
     return (
-      <tr key={patient.registrationNumber} className={`triage-row triage-${level}`}>
+      <tr
+        key={patient.registrationNumber}
+        className={`triage-row triage-${level}`}
+        onClick={() => {
+          setSelectedPatientReg(patient.registrationNumber);
+          refreshPatientEvents(patient.registrationNumber).catch(() => {});
+        }}
+      >
         <td>{escapeText(patient.registrationNumber)}</td>
         <td>{escapeText(patient.name)}</td>
         {canViewPatientType ? <td>{patientTypeLabel(locale, patient.patientType)}</td> : null}
         <td>
           {canViewTriage ? <span className="triage-pill" style={{ background: triage.color }}>{triageLabel(locale, level)}</span> : '-'}
         </td>
+        <td>{escapeText(patient.status || 'arrived')}</td>
         <td>{patient.bedNumber ? `${escapeText(patient.roomName || tr(locale, 'Chambre', 'Room', 'غرفة'))} - ${escapeText(patient.bedName || `${tr(locale, 'Lit', 'Bed', 'سرير')} ${patient.bedNumber}`)}` : tr(locale, 'Non assigne', 'Unassigned', 'غير مخصص')}</td>
         <td>
           {authenticated ? (

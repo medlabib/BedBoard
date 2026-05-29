@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -27,7 +28,7 @@ func (a *App) initDatabase() error {
 		return err
 	}
 	sqlDB.SetMaxOpenConns(1)
-	if err := db.AutoMigrate(&Bed{}, &Patient{}, &AdminUser{}, &Session{}, &AuditLog{}, &AppSetting{}); err != nil {
+	if err := db.AutoMigrate(&Bed{}, &Patient{}, &PatientEvent{}, &AdminUser{}, &Session{}, &AuditLog{}, &AppSetting{}); err != nil {
 		return err
 	}
 	a.db = db
@@ -100,6 +101,65 @@ func defaultBeds() []Bed {
 		{Number: 4, Room: "Chambre 2", Name: "Lit 4", Type: defaultBedType, Status: statusFree},
 		{Number: 5, Room: "Chambre Thoracique", Name: "Lit 5", Type: thoracicBedType, Status: statusFree},
 	}
+}
+
+func normalizePatientStatus(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case patientStatusArrived:
+		return patientStatusArrived
+	case patientStatusTriaged:
+		return patientStatusTriaged
+	case patientStatusWaiting:
+		return patientStatusWaiting
+	case patientStatusAssigned:
+		return patientStatusAssigned
+	case patientStatusConsulted:
+		return patientStatusConsulted
+	case patientStatusArchived:
+		return patientStatusArchived
+	case patientStatusTransferred:
+		return patientStatusTransferred
+	case patientStatusDeceased:
+		return patientStatusDeceased
+	default:
+		return ""
+	}
+}
+
+func (a *App) logPatientEvent(registrationNumber, username, event string, details map[string]any) {
+	if strings.TrimSpace(registrationNumber) == "" || strings.TrimSpace(event) == "" {
+		return
+	}
+	serialized, _ := json.Marshal(details)
+	entry := PatientEvent{
+		RegistrationNumber: strings.TrimSpace(registrationNumber),
+		Username:           fallback(strings.TrimSpace(username), "system"),
+		Event:              strings.TrimSpace(event),
+		Details:            string(serialized),
+	}
+	if err := a.db.Create(&entry).Error; err != nil {
+		log.Printf("patient event log failed: %v", err)
+	}
+}
+
+func (a *App) maybePublishTriageSLAAlert(patient Patient, actor string) {
+	if patient.TriageScore < 4 || patient.ArrivedAt == nil || patient.AssignedAt != nil || patient.ConsultedAt != nil {
+		return
+	}
+	triageSlaMinutes := a.getSettingInt(settingTriageSLAMinutes, envInt("TRIAGE_SLA_MINUTES", 15))
+	if time.Since(*patient.ArrivedAt).Minutes() <= float64(triageSlaMinutes) {
+		return
+	}
+	payload := alertPayload{
+		Title:      "URGENT",
+		Reason:     "triage_sla_breach",
+		Patient:    fallback(patient.Name, patient.RegistrationNumber),
+		Room:       "Non assignée",
+		Bed:        "Non assigné",
+		SourceUser: fallback(actor, "system"),
+		TimeHM:     time.Now().Format("15:04"),
+	}
+	publishUrgentAlert(a, payload)
 }
 
 func envInt(name string, def int) int {
@@ -418,12 +478,76 @@ func (a *App) handleAudit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	limit := 200
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		if parsed, err := strconv.Atoi(rawLimit); err == nil && parsed > 0 && parsed <= 5000 {
+			limit = parsed
+		}
+	}
+	query := a.db.Model(&AuditLog{})
+	if entity := strings.TrimSpace(r.URL.Query().Get("entity")); entity != "" {
+		query = query.Where("entity = ?", entity)
+	}
+	if action := strings.TrimSpace(r.URL.Query().Get("action")); action != "" {
+		query = query.Where("action = ?", action)
+	}
+	if username := strings.TrimSpace(r.URL.Query().Get("username")); username != "" {
+		query = query.Where("username = ?", username)
+	}
+	if from := strings.TrimSpace(r.URL.Query().Get("from")); from != "" {
+		if t, err := time.Parse(time.RFC3339, from); err == nil {
+			query = query.Where("created_at >= ?", t)
+		}
+	}
+	if to := strings.TrimSpace(r.URL.Query().Get("to")); to != "" {
+		if t, err := time.Parse(time.RFC3339, to); err == nil {
+			query = query.Where("created_at <= ?", t)
+		}
+	}
 	var logs []AuditLog
-	if err := a.db.Order("created_at desc").Limit(200).Find(&logs).Error; err != nil {
+	if err := query.Order("created_at desc").Limit(limit).Find(&logs).Error; err != nil {
 		http.Error(w, "audit read failed", http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"logs": logs})
+}
+
+func (a *App) handleAuditExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	query := a.db.Model(&AuditLog{})
+	if entity := strings.TrimSpace(r.URL.Query().Get("entity")); entity != "" {
+		query = query.Where("entity = ?", entity)
+	}
+	if action := strings.TrimSpace(r.URL.Query().Get("action")); action != "" {
+		query = query.Where("action = ?", action)
+	}
+	if username := strings.TrimSpace(r.URL.Query().Get("username")); username != "" {
+		query = query.Where("username = ?", username)
+	}
+	var logs []AuditLog
+	if err := query.Order("created_at desc").Limit(10000).Find(&logs).Error; err != nil {
+		http.Error(w, "audit export failed", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=audit_export.csv")
+	writer := csv.NewWriter(w)
+	_ = writer.Write([]string{"createdAt", "username", "entity", "entityKey", "action", "oldValue", "newValue"})
+	for _, logItem := range logs {
+		_ = writer.Write([]string{
+			logItem.CreatedAt.Format(time.RFC3339),
+			logItem.Username,
+			logItem.Entity,
+			logItem.EntityKey,
+			logItem.Action,
+			logItem.OldValue,
+			logItem.NewValue,
+		})
+	}
+	writer.Flush()
 }
 
 func (a *App) handleState(w http.ResponseWriter, r *http.Request) {
@@ -796,6 +920,40 @@ func (a *App) handlePatients(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if strings.TrimSpace(req.Status) != "" {
+			nextStatus := normalizePatientStatus(req.Status)
+			if nextStatus == "" {
+				http.Error(w, "invalid patient status", http.StatusBadRequest)
+				return
+			}
+			patient.Status = nextStatus
+		}
+		if strings.TrimSpace(req.Reason) != "" {
+			patient.Reason = strings.TrimSpace(req.Reason)
+		}
+		if strings.TrimSpace(req.Destination) != "" {
+			patient.Destination = strings.TrimSpace(req.Destination)
+		}
+		if strings.TrimSpace(req.Outcome) != "" {
+			patient.Outcome = strings.TrimSpace(req.Outcome)
+		}
+		now := time.Now()
+		if patient.ArrivedAt == nil {
+			patient.ArrivedAt = &now
+		}
+		if req.TriageScore != nil && patient.TriagedAt == nil {
+			patient.TriagedAt = &now
+		}
+		if patient.Status == patientStatusAssigned && patient.StartedAt == nil {
+			patient.StartedAt = &now
+		}
+		if patient.Status == patientStatusTransferred || patient.Status == patientStatusDeceased {
+			patient.ExitAt = &now
+		}
+		if err := a.db.Save(&patient).Error; err != nil {
+			http.Error(w, "save failed", http.StatusInternalServerError)
+			return
+		}
 		if req.TriageScore != nil && patient.TriageScore == 4 && previousTriageScore != 4 {
 			var linkedBed *Bed
 			if patient.BedID != nil {
@@ -806,11 +964,83 @@ func (a *App) handlePatients(w http.ResponseWriter, r *http.Request) {
 			}
 			publishUrgentAlert(a, buildTriageAlertPayload(patient, linkedBed, user.Username))
 		}
+		a.maybePublishTriageSLAAlert(patient, user.Username)
+		a.logPatientEvent(patient.RegistrationNumber, user.Username, "patient.saved", map[string]any{
+			"status":      patient.Status,
+			"triageScore": patient.TriageScore,
+			"bedAssigned": patient.BedID != nil,
+		})
 		a.broadcastEvent("patient.updated", map[string]any{"registrationNumber": patient.RegistrationNumber})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "patient": patient})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (a *App) handlePatientEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	registrationNumber := strings.TrimSpace(r.URL.Query().Get("registrationNumber"))
+	if registrationNumber == "" {
+		http.Error(w, "registration number required", http.StatusBadRequest)
+		return
+	}
+	limit := 200
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		if parsed, err := strconv.Atoi(rawLimit); err == nil && parsed > 0 && parsed <= 1000 {
+			limit = parsed
+		}
+	}
+	var events []PatientEvent
+	if err := a.db.Where("registration_number = ?", registrationNumber).Order("created_at desc").Limit(limit).Find(&events).Error; err != nil {
+		http.Error(w, "events read failed", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": events})
+}
+
+func (a *App) handlePatientsImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
+	var req struct {
+		Source   string           `json:"source"`
+		Patients []patientRequest `json:"patients"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	if len(req.Patients) == 0 {
+		http.Error(w, "patients required", http.StatusBadRequest)
+		return
+	}
+	if len(req.Patients) > 1000 {
+		http.Error(w, "too many patients in one import", http.StatusBadRequest)
+		return
+	}
+	user, _ := a.currentUser(r)
+	processed := 0
+	failures := make([]map[string]any, 0)
+	for _, item := range req.Patients {
+		item.RegistrationNumber = strings.TrimSpace(item.RegistrationNumber)
+		if item.RegistrationNumber == "" {
+			failures = append(failures, map[string]any{"registrationNumber": "", "error": "missing registration number"})
+			continue
+		}
+		if _, err := a.upsertAndAssignPatient(item, user.Username); err != nil {
+			failures = append(failures, map[string]any{"registrationNumber": item.RegistrationNumber, "error": err.Error()})
+			continue
+		}
+		processed++
+		a.logPatientEvent(item.RegistrationNumber, user.Username, "patient.imported", map[string]any{"source": strings.TrimSpace(req.Source)})
+	}
+	a.broadcastEvent("patient.updated", map[string]any{"source": "import", "processed": processed})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "processed": processed, "failed": len(failures), "failures": failures})
 }
 
 func (a *App) handlePatientsArchive(w http.ResponseWriter, r *http.Request) {
@@ -852,11 +1082,11 @@ func (a *App) handlePatientsArchive(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		patient.ArchivedAt = &now
-		patient.Status = "archived"
+		patient.Status = patientStatusArchived
 		patient.ExitAt = &now
 	case "consulted":
 		patient.ConsultedAt = &now
-		patient.Status = "consulted"
+		patient.Status = patientStatusConsulted
 	default:
 		http.Error(w, "unknown action", http.StatusBadRequest)
 		return
@@ -865,6 +1095,7 @@ func (a *App) handlePatientsArchive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "save failed", http.StatusInternalServerError)
 		return
 	}
+	a.logPatientEvent(patient.RegistrationNumber, user.Username, "patient.archive", map[string]any{"action": req.Action, "status": patient.Status})
 	a.broadcastEvent("patient.archived", map[string]any{"registrationNumber": patient.RegistrationNumber})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "patient": patient})
 }
@@ -882,6 +1113,9 @@ func (a *App) upsertAndAssignPatient(req patientRequest, actor string) (Patient,
 	}
 	trimmedReg := strings.TrimSpace(req.RegistrationNumber)
 	trimmedName := strings.TrimSpace(req.Name)
+	trimmedReason := strings.TrimSpace(req.Reason)
+	trimmedDestination := strings.TrimSpace(req.Destination)
+	trimmedOutcome := strings.TrimSpace(req.Outcome)
 	normalizedPatientType := ""
 	if strings.TrimSpace(req.PatientType) != "" {
 		normalizedPatientType = normalizePatientType(req.PatientType)
@@ -920,8 +1154,24 @@ func (a *App) upsertAndAssignPatient(req patientRequest, actor string) (Patient,
 	if strings.TrimSpace(patient.Name) == "" {
 		return Patient{}, fmt.Errorf("name required")
 	}
+	if trimmedReason != "" {
+		patient.Reason = trimmedReason
+	}
+	if trimmedDestination != "" {
+		patient.Destination = trimmedDestination
+	}
+	if trimmedOutcome != "" {
+		patient.Outcome = trimmedOutcome
+	}
+	now := time.Now()
+	if patient.ArrivedAt == nil {
+		patient.ArrivedAt = &now
+	}
+	if req.TriageScore != nil && patient.TriagedAt == nil {
+		patient.TriagedAt = &now
+	}
 	if patient.Status == "" {
-		patient.Status = "unassigned"
+		patient.Status = patientStatusArrived
 	}
 	if err := a.db.Save(&patient).Error; err != nil {
 		return Patient{}, err
@@ -955,10 +1205,12 @@ func (a *App) upsertAndAssignPatient(req patientRequest, actor string) (Patient,
 			_ = a.db.Save(&previousBed).Error
 		}
 	}
-	now := time.Now()
 	patient.BedID = &bed.ID
 	patient.AssignedAt = &now
-	patient.Status = "assigned"
+	patient.Status = patientStatusAssigned
+	if patient.StartedAt == nil {
+		patient.StartedAt = &now
+	}
 	if err := a.db.Save(&patient).Error; err != nil {
 		return Patient{}, err
 	}
@@ -970,6 +1222,7 @@ func (a *App) upsertAndAssignPatient(req patientRequest, actor string) (Patient,
 		return Patient{}, err
 	}
 	a.logBedChange(actor, "bed.assign", before, bed)
+	a.logPatientEvent(patient.RegistrationNumber, actor, "patient.assigned", map[string]any{"bedNumber": bed.Number, "room": bed.Room})
 	return patient, nil
 }
 
@@ -992,8 +1245,9 @@ func (a *App) releasePatientByID(patientID uint, actor string, markConsulted boo
 	if markConsulted && patient.BedID != nil {
 		now := time.Now()
 		patient.ConsultedAt = &now
-		patient.Status = "consulted"
+		patient.Status = patientStatusConsulted
 	}
 	patient.BedID = nil
 	_ = a.db.Save(&patient).Error
+	a.logPatientEvent(patient.RegistrationNumber, actor, "patient.released", map[string]any{"consulted": markConsulted})
 }

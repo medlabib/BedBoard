@@ -22,6 +22,10 @@ export default function SettingsScreen({
   saveSecurityConfig,
   securityHealth,
   refreshSecurityHealth,
+  exportAuditCsv,
+  patientImportForm,
+  setPatientImportForm,
+  importPatients,
   uiConfigForm,
   setUiConfigForm,
   saveUiConfig,
@@ -233,6 +237,10 @@ export default function SettingsScreen({
                 </select>
               </label>
               <label>
+                TRIAGE_SLA_MINUTES
+                <input className="form-control" value={securityConfigForm.triageSlaMinutes} type="number" min="1" max="240" onChange={(event) => setSecurityConfigForm((current) => ({ ...current, triageSlaMinutes: event.target.value }))} />
+              </label>
+              <label>
                 GOTIFY_TOKEN_ENC_KEY (base64)
                 <input className="form-control" value={securityConfigForm.gotifyTokenEncKey} type="password" placeholder={securityConfigForm.gotifyTokenEncKeyConfigured ? tr(locale, 'Deja configure', 'Already configured', 'مضبوط مسبقًا') : tr(locale, 'Entrer cle base64', 'Enter base64 key', 'أدخل مفتاح base64')} onChange={(event) => setSecurityConfigForm((current) => ({ ...current, gotifyTokenEncKey: event.target.value }))} />
               </label>
@@ -327,6 +335,22 @@ export default function SettingsScreen({
             </div>
             <p className="small-note">{tr(locale, 'Conseil: sauvegarder puis tester pour valider URL/token.', 'Tip: save then test to validate URL/token.', 'نصيحة: احفظ ثم اختبر للتحقق من الرابط/الرمز.')}</p>
           </div>
+
+          <div className="form-card settings-focus-card">
+            <h2>{tr(locale, 'Import patient (JSON)', 'Patient import (JSON)', 'استيراد المرضى (JSON)')}</h2>
+            <p className="small-note">{tr(locale, 'Format attendu: {"patients": [{"registrationNumber": "...", "name": "...", "patientType": "medical", "triageScore": 2}]}', 'Expected format: {"patients": [{"registrationNumber": "...", "name": "...", "patientType": "medical", "triageScore": 2}]}', 'التنسيق المتوقع: {"patients": [{"registrationNumber": "...", "name": "...", "patientType": "medical", "triageScore": 2}]}')}</p>
+            <div className="form-grid">
+              <label>
+                {tr(locale, 'Source import', 'Import source', 'مصدر الاستيراد')}
+                <input className="form-control" value={patientImportForm.source} type="text" onChange={(event) => setPatientImportForm((current) => ({ ...current, source: event.target.value }))} />
+              </label>
+              <label>
+                {tr(locale, 'Payload JSON', 'JSON payload', 'بيانات JSON')}
+                <textarea className="form-control" rows="8" value={patientImportForm.json} onChange={(event) => setPatientImportForm((current) => ({ ...current, json: event.target.value }))} />
+              </label>
+              <button className="btn primary" type="button" onClick={importPatients}>{tr(locale, 'Importer patients', 'Import patients', 'استيراد المرضى')}</button>
+            </div>
+          </div>
         </div>
       ) : null}
 
@@ -337,6 +361,7 @@ export default function SettingsScreen({
             <div className="form-grid">
               <button className="btn primary" type="button" onClick={createBackup}>{tr(locale, 'Sauvegarde 1 clic', 'One-click backup', 'نسخ احتياطي بنقرة واحدة')}</button>
               <button className="btn" type="button" onClick={restoreLatestBackup}>{tr(locale, 'Restaurer derniere sauvegarde', 'Restore latest backup', 'استعادة آخر نسخة احتياطية')}</button>
+              <button className="btn" type="button" onClick={exportAuditCsv}>{tr(locale, 'Exporter audit CSV', 'Export audit CSV', 'تصدير تدقيق CSV')}</button>
             </div>
             <p className="small-note">{tr(locale, 'Derniere sauvegarde', 'Latest backup', 'آخر نسخة احتياطية')}: {lastBackupFile ? escapeText(lastBackupFile) : tr(locale, 'Aucune', 'None', 'لا يوجد')}</p>
           </div>

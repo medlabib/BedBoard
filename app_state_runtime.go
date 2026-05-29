@@ -38,7 +38,13 @@ func (a *App) collectState(r *http.Request) (statePayload, error) {
 	role := roleOf(user)
 	receptionRestricted := role == roleReception
 
-	stats := statsView{TotalBeds: len(beds), TotalPatients: len(patients), TriageByLevel: map[string]int{"0": 0, "1": 0, "2": 0, "3": 0, "4": 0}}
+	stats := statsView{
+		TotalBeds:        len(beds),
+		TotalPatients:    len(patients),
+		TriageByLevel:    map[string]int{"0": 0, "1": 0, "2": 0, "3": 0, "4": 0},
+		PatientsByStatus: map[string]int{},
+		PatientsByType:   map[string]int{},
+	}
 	bedByID := make(map[uint]Bed, len(beds))
 	patientByID := make(map[uint]Patient, len(patients))
 	for _, bed := range beds {
@@ -85,18 +91,39 @@ func (a *App) collectState(r *http.Request) (statePayload, error) {
 	// additional stats: archived, consultations by date, avg consultation length
 	archivedCount := 0
 	consultsByDate := make(map[string]int)
+	consultsByHour := make(map[string]int)
+	triageSlaMinutes := a.getSettingInt(settingTriageSLAMinutes, envInt("TRIAGE_SLA_MINUTES", 15))
 	var totalConsultMinutes float64
 	var consultCount int
+	var totalWaitToTriage float64
+	var waitToTriageCount int
+	var totalWaitToAssign float64
+	var waitToAssignCount int
 	for _, patient := range patients {
 		patientType := normalizePatientType(patient.PatientType)
 		if patientType == "" {
 			patientType = patientTypeMedical
 		}
-		view := patientView{RegistrationNumber: patient.RegistrationNumber, Name: patient.Name, PatientType: patientType, TriageScore: patient.TriageScore, Status: patient.Status, AssignedAt: patient.AssignedAt}
+		view := patientView{
+			RegistrationNumber: patient.RegistrationNumber,
+			Name:               patient.Name,
+			PatientType:        patientType,
+			TriageScore:        patient.TriageScore,
+			Reason:             patient.Reason,
+			Destination:        patient.Destination,
+			Outcome:            patient.Outcome,
+			Status:             patient.Status,
+			ArrivedAt:          patient.ArrivedAt,
+			TriagedAt:          patient.TriagedAt,
+			StartedAt:          patient.StartedAt,
+			AssignedAt:         patient.AssignedAt,
+		}
 		if receptionRestricted {
 			view.Name = ""
 			view.PatientType = ""
 			view.TriageScore = 0
+			view.Reason = ""
+			view.Outcome = ""
 		}
 		if patient.BedID != nil {
 			if bed, ok := bedByID[*patient.BedID]; ok {
@@ -113,9 +140,36 @@ func (a *App) collectState(r *http.Request) (statePayload, error) {
 		}
 		key := strconv.Itoa(patient.TriageScore)
 		stats.TriageByLevel[key]++
+		statusKey := strings.TrimSpace(patient.Status)
+		if statusKey == "" {
+			statusKey = patientStatusArrived
+		}
+		stats.PatientsByStatus[statusKey]++
+		stats.PatientsByType[patientType]++
+		if patient.ArrivedAt != nil && patient.TriagedAt != nil {
+			diff := patient.TriagedAt.Sub(*patient.ArrivedAt).Minutes()
+			if diff >= 0 {
+				totalWaitToTriage += diff
+				waitToTriageCount++
+			}
+		}
+		if patient.ArrivedAt != nil && patient.AssignedAt != nil {
+			diff := patient.AssignedAt.Sub(*patient.ArrivedAt).Minutes()
+			if diff >= 0 {
+				totalWaitToAssign += diff
+				waitToAssignCount++
+			}
+		}
+		if patient.TriageScore >= 4 && patient.ArrivedAt != nil && patient.AssignedAt == nil && patient.ConsultedAt == nil {
+			if time.Since(*patient.ArrivedAt).Minutes() > float64(triageSlaMinutes) {
+				stats.TriageSLABreaches++
+			}
+		}
 		if patient.ConsultedAt != nil {
 			dateKey := patient.ConsultedAt.Format("2006-01-02")
 			consultsByDate[dateKey]++
+			hourKey := patient.ConsultedAt.Format("15:00")
+			consultsByHour[hourKey]++
 			if patient.AssignedAt != nil {
 				diff := patient.ConsultedAt.Sub(*patient.AssignedAt).Minutes()
 				if diff >= 0 {
@@ -131,13 +185,28 @@ func (a *App) collectState(r *http.Request) (statePayload, error) {
 	for k, v := range consultsByDate {
 		consultsSlice = append(consultsSlice, map[string]any{"date": k, "count": v})
 	}
+	consultsByHourSlice := make([]map[string]any, 0, len(consultsByHour))
+	for k, v := range consultsByHour {
+		consultsByHourSlice = append(consultsByHourSlice, map[string]any{"hour": k, "count": v})
+	}
 	avgMinutes := 0.0
 	if consultCount > 0 {
 		avgMinutes = totalConsultMinutes / float64(consultCount)
 	}
+	avgWaitToTriage := 0.0
+	if waitToTriageCount > 0 {
+		avgWaitToTriage = totalWaitToTriage / float64(waitToTriageCount)
+	}
+	avgWaitToAssign := 0.0
+	if waitToAssignCount > 0 {
+		avgWaitToAssign = totalWaitToAssign / float64(waitToAssignCount)
+	}
 	stats.ArchivedPatients = archivedCount
 	stats.ConsultationsByDate = consultsSlice
+	stats.ConsultationsByHour = consultsByHourSlice
 	stats.AvgConsultationMinutes = avgMinutes
+	stats.AvgWaitToTriageMinutes = avgWaitToTriage
+	stats.AvgWaitToAssignMinutes = avgWaitToAssign
 	stats.TotalConsultations = consultCount
 	return statePayload{Beds: views, Patients: patientViews, Stats: stats, Authenticated: ok, Username: user.Username, Admin: isAdminLike(user), ServerTime: time.Now().Format(time.RFC3339)}, nil
 }
@@ -327,7 +396,7 @@ func (a *App) reopenDatabase() error {
 		return err
 	}
 	sqlDB.SetMaxOpenConns(1)
-	if err := db.AutoMigrate(&Bed{}, &Patient{}, &AdminUser{}, &Session{}, &AuditLog{}, &AppSetting{}); err != nil {
+	if err := db.AutoMigrate(&Bed{}, &Patient{}, &PatientEvent{}, &AdminUser{}, &Session{}, &AuditLog{}, &AppSetting{}); err != nil {
 		return err
 	}
 	a.db = db

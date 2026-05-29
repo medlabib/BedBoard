@@ -43,6 +43,14 @@ const (
 	patientTypeMedical               = "medical"
 	patientTypeChestPain             = "douleurs_thoracique"
 	patientTypeSurgical              = "chirurgical"
+	patientStatusArrived             = "arrived"
+	patientStatusTriaged             = "triaged"
+	patientStatusWaiting             = "waiting"
+	patientStatusAssigned            = "assigned"
+	patientStatusConsulted           = "consulted"
+	patientStatusArchived            = "archived"
+	patientStatusTransferred         = "transferred"
+	patientStatusDeceased            = "deceased"
 )
 
 var (
@@ -168,12 +176,27 @@ type Patient struct {
 	TriageScore        int        `json:"triageScore"`
 	BedID              *uint      `json:"-"`
 	Status             string     `json:"status"`
+	Reason             string     `json:"reason"`
+	Destination        string     `json:"destination"`
+	Outcome            string     `json:"outcome"`
+	ArrivedAt          *time.Time `json:"arrivedAt"`
+	TriagedAt          *time.Time `json:"triagedAt"`
+	StartedAt          *time.Time `json:"startedAt"`
 	AssignedAt         *time.Time `json:"assignedAt"`
 	ConsultedAt        *time.Time `json:"consultedAt"`
 	ArchivedAt         *time.Time `json:"archivedAt"`
 	ExitAt             *time.Time `json:"exitAt"`
 	CreatedAt          time.Time  `json:"-"`
 	UpdatedAt          time.Time  `json:"-"`
+}
+
+type PatientEvent struct {
+	ID                 uint      `gorm:"primaryKey" json:"id"`
+	RegistrationNumber string    `gorm:"index;not null" json:"registrationNumber"`
+	Username           string    `json:"username"`
+	Event              string    `gorm:"index;not null" json:"event"`
+	Details            string    `gorm:"type:text;not null;default:''" json:"details"`
+	CreatedAt          time.Time `gorm:"index" json:"createdAt"`
 }
 
 type AdminUser struct {
@@ -291,6 +314,10 @@ type patientRequest struct {
 	BedNumber          int    `json:"bedNumber"`
 	BedID              int    `json:"bedId"`
 	TriageScore        *int   `json:"triageScore"`
+	Status             string `json:"status"`
+	Reason             string `json:"reason"`
+	Destination        string `json:"destination"`
+	Outcome            string `json:"outcome"`
 }
 
 type statePayload struct {
@@ -322,12 +349,18 @@ type patientView struct {
 	Name               string     `json:"name"`
 	PatientType        string     `json:"patientType"`
 	TriageScore        int        `json:"triageScore"`
+	Reason             string     `json:"reason"`
+	Destination        string     `json:"destination"`
+	Outcome            string     `json:"outcome"`
 	BedNumber          *int       `json:"bedNumber"`
 	RoomName           string     `json:"roomName"`
 	RoomNameAlt        string     `json:"roomNameAlt"`
 	BedName            string     `json:"bedName"`
 	BedNameAlt         string     `json:"bedNameAlt"`
 	Status             string     `json:"status"`
+	ArrivedAt          *time.Time `json:"arrivedAt"`
+	TriagedAt          *time.Time `json:"triagedAt"`
+	StartedAt          *time.Time `json:"startedAt"`
 	AssignedAt         *time.Time `json:"assignedAt"`
 }
 
@@ -340,9 +373,15 @@ type statsView struct {
 	TotalPatients          int              `json:"totalPatients"`
 	ArchivedPatients       int              `json:"archivedPatients"`
 	ConsultationsByDate    []map[string]any `json:"consultationsByDate"`
+	ConsultationsByHour    []map[string]any `json:"consultationsByHour"`
 	AvgConsultationMinutes float64          `json:"avgConsultationMinutes"`
+	AvgWaitToTriageMinutes float64          `json:"avgWaitToTriageMinutes"`
+	AvgWaitToAssignMinutes float64          `json:"avgWaitToAssignMinutes"`
 	TotalConsultations     int              `json:"totalConsultations"`
 	TriageByLevel          map[string]int   `json:"triageByLevel"`
+	PatientsByStatus       map[string]int   `json:"patientsByStatus"`
+	PatientsByType         map[string]int   `json:"patientsByType"`
+	TriageSLABreaches      int              `json:"triageSlaBreaches"`
 }
 
 func main() {
@@ -392,6 +431,7 @@ func main() {
 	mux.HandleFunc("/api/users", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handleUsers)))))
 	mux.HandleFunc("/api/users/password", app.withCORS(app.requireAuthDB(app.withDBWrite(app.handleUserPassword))))
 	mux.HandleFunc("/api/audit", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBRead(app.handleAudit)))))
+	mux.HandleFunc("/api/admin/audit/export", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBRead(app.handleAuditExport)))))
 	mux.HandleFunc("/api/admin/ui/config", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handleUIConfig)))))
 	mux.HandleFunc("/api/admin/security/health", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBRead(app.handleSecurityHealth)))))
 	mux.HandleFunc("/api/admin/security/config", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handleSecurityConfig)))))
@@ -399,11 +439,13 @@ func main() {
 	mux.HandleFunc("/api/admin/restore", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handleRestore)))))
 	mux.HandleFunc("/api/admin/integrations/gotify", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handleGotifySettings)))))
 	mux.HandleFunc("/api/admin/integrations/gotify/test", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handleGotifyTest)))))
+	mux.HandleFunc("/api/admin/integrations/patients/import", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handlePatientsImport)))))
 	mux.HandleFunc("/api/status", app.withCORS(app.requireAuthDB(app.withDBWrite(app.handleStatus))))
 	mux.HandleFunc("/api/config-bed", app.withCORS(app.requireAuthDB(app.withDBWrite(app.handleConfigBed))))
 	mux.HandleFunc("/api/beds", app.withCORS(app.requireAuthDB(app.withDBWrite(app.handleBedsCreate))))
 	mux.HandleFunc("/api/beds/delete", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handleBedsDelete)))))
 	mux.HandleFunc("/api/patients", app.withCORS(app.requireAuthDB(app.withDBWrite(app.handlePatients))))
+	mux.HandleFunc("/api/patients/events", app.withCORS(app.requireAuthDB(app.withDBRead(app.handlePatientEvents))))
 	mux.HandleFunc("/api/patients/archive", app.withCORS(app.requireAuthDB(app.withDBWrite(app.handlePatientsArchive))))
 
 	serverAddr := defaultPort

@@ -20,9 +20,15 @@ const initialStats = {
   totalPatients: 0,
   archivedPatients: 0,
   consultationsByDate: [],
+  consultationsByHour: [],
   avgConsultationMinutes: 0,
+  avgWaitToTriageMinutes: 0,
+  avgWaitToAssignMinutes: 0,
   totalConsultations: 0,
   triageByLevel: { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 },
+  patientsByStatus: {},
+  patientsByType: {},
+  triageSlaBreaches: 0,
 };
 
 const statusMeta = {
@@ -128,7 +134,7 @@ function App() {
   const [uiConfigForm, setUiConfigForm] = useState({ appName: 'BedBoard', logoDataUrl: '', locale: 'fr', clearLogo: false });
   const [publicUiConfig, setPublicUiConfig] = useState({ appName: 'BedBoard', logoDataUrl: '', locale: 'fr' });
   const [newBed, setNewBed] = useState({ number: '', room: '', name: '', type: 'standard' });
-  const [newPatient, setNewPatient] = useState({ registrationNumber: '', name: '', patientType: 'medical', bedNumber: '', triageScore: '0' });
+  const [newPatient, setNewPatient] = useState({ registrationNumber: '', name: '', patientType: 'medical', bedNumber: '', triageScore: '0', status: 'arrived', reason: '', destination: '', outcome: '' });
   const [patientTypeFilter, setPatientTypeFilter] = useState(() => loadPatientTypeFilter());
   const [visiblePatientTypes, setVisiblePatientTypes] = useState(() => patientTypeSelectableOptions.map((option) => option));
   const [newUser, setNewUser] = useState({ username: '', password: '', role: 'user' });
@@ -148,12 +154,16 @@ function App() {
     gotifyTokenEncKey: '',
     adminInitPasswordConfigured: false,
     gotifyTokenEncKeyConfigured: false,
+    triageSlaMinutes: 15,
     clearAdminInitPassword: false,
     clearGotifyTokenEncKey: false,
   });
   const [securityHealth, setSecurityHealth] = useState({ status: 'unknown', checks: [], loaded: false });
   const [bedEdits, setBedEdits] = useState({});
   const [auditLogs, setAuditLogs] = useState([]);
+  const [patientEvents, setPatientEvents] = useState([]);
+  const [selectedPatientReg, setSelectedPatientReg] = useState('');
+  const [patientImportForm, setPatientImportForm] = useState({ source: 'manual', json: '' });
   const [lastBackupFile, setLastBackupFile] = useState('');
   const [notice, setNotice] = useState({ type: '', text: '' });
 
@@ -326,6 +336,55 @@ function App() {
     setAuditLogs(Array.isArray(data.logs) ? data.logs : []);
   };
 
+  const exportAuditCsv = () => {
+    window.location.assign('/api/admin/audit/export');
+  };
+
+  const refreshPatientEvents = async (registrationNumber) => {
+    const reg = String(registrationNumber || '').trim();
+    if (!reg) {
+      setPatientEvents([]);
+      return;
+    }
+    const response = await api(`/api/patients/events?registrationNumber=${encodeURIComponent(reg)}`);
+    if (!response.ok) {
+      showError(await readErrorMessage(response, tr(locale, 'Lecture timeline patient impossible.', 'Unable to load patient timeline.', 'تعذر قراءة التسلسل الزمني للمريض.')));
+      return;
+    }
+    const data = await response.json().catch(() => ({ events: [] }));
+    setPatientEvents(Array.isArray(data.events) ? data.events : []);
+  };
+
+  const importPatients = async () => {
+    if (!isAdmin) return;
+    let parsed;
+    try {
+      parsed = JSON.parse(patientImportForm.json || '{}');
+    } catch (error) {
+      showError(tr(locale, 'JSON import invalide.', 'Invalid import JSON.', 'تنسيق JSON غير صالح للاستيراد.'));
+      return;
+    }
+    const body = {
+      source: patientImportForm.source || 'manual',
+      patients: Array.isArray(parsed?.patients) ? parsed.patients : [],
+    };
+    if (!Array.isArray(body.patients) || !body.patients.length) {
+      showError(tr(locale, 'Le JSON doit contenir un tableau patients non vide.', 'JSON must include a non-empty patients array.', 'يجب أن يحتوي JSON على مصفوفة مرضى غير فارغة.'));
+      return;
+    }
+    const response = await api('/api/admin/integrations/patients/import', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      showError((data && data.error) || tr(locale, 'Import patients impossible.', 'Unable to import patients.', 'تعذر استيراد المرضى.'));
+      return;
+    }
+    await refreshState();
+    showSuccess(`${tr(locale, 'Import termine', 'Import completed', 'اكتمل الاستيراد')}: ${data.processed || 0} ${tr(locale, 'reussis', 'successful', 'ناجح')}, ${data.failed || 0} ${tr(locale, 'echecs', 'failed', 'فاشل')}.`);
+  };
+
   const refreshGotifySettings = async () => {
     if (!isAdmin) return;
     const response = await api('/api/admin/integrations/gotify', { method: 'GET' });
@@ -399,6 +458,7 @@ function App() {
       gotifyTokenEncKey: '',
       adminInitPasswordConfigured: Boolean(data.adminInitPasswordConfigured),
       gotifyTokenEncKeyConfigured: Boolean(data.gotifyTokenEncKeyConfigured),
+      triageSlaMinutes: Number(data.triageSlaMinutes || 15),
       clearAdminInitPassword: false,
       clearGotifyTokenEncKey: false,
     }));
@@ -418,6 +478,7 @@ function App() {
         hstsIncludeSubdomains: Boolean(securityConfigForm.hstsIncludeSubdomains),
         hstsPreload: Boolean(securityConfigForm.hstsPreload),
         gotifyTokenEncKey: securityConfigForm.gotifyTokenEncKey,
+        triageSlaMinutes: Number(securityConfigForm.triageSlaMinutes || 15),
         clearAdminInitPassword: Boolean(securityConfigForm.clearAdminInitPassword),
         clearGotifyTokenEncKey: Boolean(securityConfigForm.clearGotifyTokenEncKey),
       }),
@@ -732,10 +793,19 @@ function App() {
         patientType: newPatient.patientType,
         bedNumber: Number(newPatient.bedNumber),
         triageScore: Number(newPatient.triageScore),
+        status: newPatient.status,
+        reason: newPatient.reason,
+        destination: newPatient.destination,
+        outcome: newPatient.outcome,
       }),
     });
     if (response.ok) {
-      setNewPatient({ registrationNumber: '', name: '', patientType: 'medical', bedNumber: '', triageScore: '0' });
+      const data = await response.json().catch(() => ({}));
+      setNewPatient({ registrationNumber: '', name: '', patientType: 'medical', bedNumber: '', triageScore: '0', status: 'arrived', reason: '', destination: '', outcome: '' });
+      if (data?.patient?.registrationNumber) {
+        setSelectedPatientReg(data.patient.registrationNumber);
+        refreshPatientEvents(data.patient.registrationNumber).catch(() => {});
+      }
       showSuccess(tr(locale, 'Patient enregistre.', 'Patient saved.', 'تم حفظ المريض.'));
       return;
     }
@@ -1233,6 +1303,30 @@ function App() {
                         <option value="4">4</option>
                       </select>
                     </label>
+                    <label>
+                      {tr(locale, 'Statut patient', 'Patient status', 'حالة المريض')}
+                      <select className="form-select" value={newPatient.status} onChange={(event) => setNewPatient((current) => ({ ...current, status: event.target.value }))}>
+                        <option value="arrived">arrived</option>
+                        <option value="triaged">triaged</option>
+                        <option value="waiting">waiting</option>
+                        <option value="assigned">assigned</option>
+                        <option value="consulted">consulted</option>
+                        <option value="transferred">transferred</option>
+                        <option value="deceased">deceased</option>
+                      </select>
+                    </label>
+                    <label>
+                      {tr(locale, 'Motif', 'Reason', 'السبب')}
+                      <input className="form-control" value={newPatient.reason} type="text" onChange={(event) => setNewPatient((current) => ({ ...current, reason: event.target.value }))} />
+                    </label>
+                    <label>
+                      {tr(locale, 'Destination', 'Destination', 'الوجهة')}
+                      <input className="form-control" value={newPatient.destination} type="text" onChange={(event) => setNewPatient((current) => ({ ...current, destination: event.target.value }))} />
+                    </label>
+                    <label>
+                      {tr(locale, 'Issue clinique', 'Outcome', 'النتيجة')}
+                      <input className="form-control" value={newPatient.outcome} type="text" onChange={(event) => setNewPatient((current) => ({ ...current, outcome: event.target.value }))} />
+                    </label>
                     <button className="btn primary" type="button" onClick={savePatient}>{tr(locale, 'Enregistrer patient', 'Save patient', 'حفظ المريض')}</button>
                   </div>
                   {isTriage ? <p className="small-note">{tr(locale, 'Le profil triage enregistre uniquement des patients non assignes.', 'Triage role only registers unassigned patients.', 'دور الفرز يسجل المرضى غير المخصصين فقط.')}</p> : null}
@@ -1255,6 +1349,7 @@ function App() {
                       <th>{tr(locale, 'Nom', 'Name', 'الاسم')}</th>
                       {canViewPatientType ? <th>{tr(locale, 'Type', 'Type', 'النوع')}</th> : null}
                       <th>{tr(locale, 'Triage', 'Triage', 'الفرز')}</th>
+                      <th>{tr(locale, 'Statut', 'Status', 'الحالة')}</th>
                       <th>{tr(locale, 'Chambre / Lit', 'Room / Bed', 'الغرفة / السرير')}</th>
                       <th>{tr(locale, 'Actions', 'Actions', 'الإجراءات')}</th>
                     </tr>
@@ -1275,11 +1370,39 @@ function App() {
                       showSuccess={showSuccess}
                       readErrorMessage={readErrorMessage}
                       setPatients={setPatients}
+                      setSelectedPatientReg={setSelectedPatientReg}
+                      refreshPatientEvents={refreshPatientEvents}
                       escapeText={escapeText}
                       locale={locale}
                     />
                   </tbody>
                 </table>
+              </div>
+              <div className="form-card" style={{ marginTop: 14 }}>
+                <h2>{tr(locale, 'Timeline patient', 'Patient timeline', 'التسلسل الزمني للمريض')}</h2>
+                <p className="small-note">{selectedPatientReg ? `${tr(locale, 'Patient', 'Patient', 'المريض')}: ${escapeText(selectedPatientReg)}` : tr(locale, 'Selectionnez un patient pour afficher ses evenements.', 'Select a patient to view timeline events.', 'اختر مريضًا لعرض الأحداث الزمنية.')}</p>
+                <div className="table-wrap">
+                  <table className="table table-sm align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th>{tr(locale, 'Heure', 'Time', 'الوقت')}</th>
+                        <th>{tr(locale, 'Evenement', 'Event', 'الحدث')}</th>
+                        <th>{tr(locale, 'Utilisateur', 'User', 'المستخدم')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {patientEvents.length ? patientEvents.map((entry) => (
+                        <tr key={entry.id || `${entry.createdAt}-${entry.event}`}>
+                          <td>{entry.createdAt ? new Date(entry.createdAt).toLocaleString(locale) : '-'}</td>
+                          <td>{escapeText(entry.event)}</td>
+                          <td>{escapeText(entry.username || 'system')}</td>
+                        </tr>
+                      )) : (
+                        <tr><td colSpan="3"><div className="empty">{tr(locale, 'Aucun evenement timeline.', 'No timeline events.', 'لا توجد أحداث زمنية.')}</div></td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           ) : null}
@@ -1328,6 +1451,10 @@ function App() {
               saveSecurityConfig={saveSecurityConfig}
               securityHealth={securityHealth}
               refreshSecurityHealth={refreshSecurityHealth}
+              exportAuditCsv={exportAuditCsv}
+              patientImportForm={patientImportForm}
+              setPatientImportForm={setPatientImportForm}
+              importPatients={importPatients}
               uiConfigForm={uiConfigForm}
               setUiConfigForm={setUiConfigForm}
               saveUiConfig={saveUiConfig}
