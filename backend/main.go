@@ -232,6 +232,19 @@ type Session struct {
 	UpdatedAt   time.Time `json:"-"`
 }
 
+type AlertNotification struct {
+	ID             uint       `gorm:"primaryKey" json:"id"`
+	Channel        string     `gorm:"index;not null" json:"channel"`
+	Recipient      string     `json:"recipient"`
+	Title          string     `json:"title"`
+	Message        string     `gorm:"type:text" json:"message"`
+	Status         string     `gorm:"index;not null" json:"status"`
+	AckToken       string     `gorm:"index" json:"-"`
+	ErrorText      string     `gorm:"type:text" json:"errorText"`
+	CreatedAt      time.Time  `gorm:"index" json:"createdAt"`
+	AcknowledgedAt *time.Time `json:"acknowledgedAt"`
+}
+
 type AppSetting struct {
 	ID        uint      `gorm:"primaryKey" json:"-"`
 	Key       string    `gorm:"uniqueIndex;size:128;not null" json:"key"`
@@ -386,10 +399,15 @@ type statsView struct {
 }
 
 func main() {
+	if err := initLogger(); err != nil {
+		log.Fatalf("init logger: %v", err)
+	}
+	defer syncLogger()
+
 	if err := resolveDataPaths(); err != nil {
 		log.Fatalf("resolve data paths: %v", err)
 	}
-	log.Printf("BedBoard data directory: %s", dataDirPath)
+	appLog.Infow("BedBoard data directory resolved", "path", dataDirPath)
 
 	app := &App{clients: make(map[chan string]struct{}), bedLocks: make(map[int]*sync.Mutex)}
 	if err := app.initDatabase(); err != nil {
@@ -440,6 +458,11 @@ func main() {
 	mux.HandleFunc("/api/admin/restore", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handleRestore)))))
 	mux.HandleFunc("/api/admin/integrations/gotify", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handleGotifySettings)))))
 	mux.HandleFunc("/api/admin/integrations/gotify/test", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handleGotifyTest)))))
+	mux.HandleFunc("/api/admin/integrations/alerts/channels", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handleAlertChannelsSettings)))))
+	mux.HandleFunc("/api/admin/integrations/alerts/channels/test", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handleAlertChannelsTest)))))
+	mux.HandleFunc("/api/admin/integrations/alerts/notifications", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBRead(app.handleAlertNotifications)))))
+	mux.HandleFunc("/api/admin/integrations/alerts/notifications/ack", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handleAlertNotificationAck)))))
+	mux.HandleFunc("/api/integrations/alerts/ack", app.withCORS(app.withDBWrite(app.handleAlertAckByToken)))
 	mux.HandleFunc("/api/admin/integrations/patients/import", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handlePatientsImport)))))
 	mux.HandleFunc("/api/status", app.withCORS(app.requireAuthDB(app.withDBWrite(app.handleStatus))))
 	mux.HandleFunc("/api/config-bed", app.withCORS(app.requireAuthDB(app.withDBWrite(app.handleConfigBed))))
@@ -460,7 +483,7 @@ func main() {
 
 	handler := app.withSecurityHeaders(mux)
 
-	log.Printf("BedBoard listening on http://localhost%s", serverAddr)
+	appLog.Infow("BedBoard listening", "address", "http://localhost"+serverAddr)
 	if err := http.ListenAndServe(serverAddr, handler); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("listen: %v", err)
 	}

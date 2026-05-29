@@ -28,7 +28,7 @@ func (a *App) initDatabase() error {
 		return err
 	}
 	sqlDB.SetMaxOpenConns(1)
-	if err := db.AutoMigrate(&Bed{}, &Patient{}, &PatientEvent{}, &AdminUser{}, &Session{}, &AuditLog{}, &AppSetting{}); err != nil {
+	if err := db.AutoMigrate(&Bed{}, &Patient{}, &PatientEvent{}, &AdminUser{}, &Session{}, &AuditLog{}, &AppSetting{}, &AlertNotification{}); err != nil {
 		return err
 	}
 	a.db = db
@@ -54,7 +54,7 @@ func (a *App) bootstrapData() error {
 		}
 		if password == "" {
 			password = insecureDefaultBootstrapPassword
-			log.Printf("WARNING: security.admin_init_password not set. Using insecure default bootstrap password. Change immediately after first login.")
+			appLog.Warnw("security.admin_init_password not set; using insecure bootstrap password")
 		}
 		hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		if err != nil {

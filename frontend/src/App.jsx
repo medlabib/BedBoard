@@ -143,6 +143,11 @@ function App() {
   const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [resetPasswordForm, setResetPasswordForm] = useState({ username: '', newPassword: '', confirmPassword: '' });
   const [gotifyForm, setGotifyForm] = useState({ enabled: false, url: '', token: '', priority: 8, tokenConfigured: false, clearToken: false });
+  const [alertChannelsForm, setAlertChannelsForm] = useState({
+    sms: { enabled: false, webhookUrl: '', recipient: '' },
+    whatsapp: { enabled: false, webhookUrl: '', recipient: '' },
+  });
+  const [alertNotifications, setAlertNotifications] = useState([]);
   const [securityConfigForm, setSecurityConfigForm] = useState({
     adminInitUsername: 'admin',
     adminInitPassword: '',
@@ -160,10 +165,15 @@ function App() {
     adminInitPasswordConfigured: false,
     gotifyTokenEncKeyConfigured: false,
     proxyPasswordConfigured: false,
+    alertCallbackSignatureRequired: true,
+    alertCallbackSecret: '',
+    alertCallbackSecretConfigured: false,
+    alertCallbackIpAllowlist: '',
     triageSlaMinutes: 15,
     clearAdminInitPassword: false,
     clearGotifyTokenEncKey: false,
     clearProxyPassword: false,
+    clearAlertCallbackSecret: false,
   });
   const [securityHealth, setSecurityHealth] = useState({ status: 'unknown', checks: [], loaded: false });
   const [bedEdits, setBedEdits] = useState({});
@@ -389,7 +399,7 @@ function App() {
       return;
     }
     await refreshState();
-    showSuccess(`${tr(locale, 'Import termine', 'Import completed', 'اكتمل الاستيراد')}: ${data.processed || 0} ${tr(locale, 'reussis', 'successful', 'ناجح')}, ${data.failed || 0} ${tr(locale, 'echecs', 'failed', 'فاشل')}.`);
+    showSuccess(`${tr(locale, 'Import termine', 'Import completed', 'اكتمل الاستيراد')} (${patientImportForm.source || 'manual'}): ${data.processed || 0} ${tr(locale, 'reussis', 'successful', 'ناجح')}, ${data.failed || 0} ${tr(locale, 'echecs', 'failed', 'فاشل')}.`);
   };
 
   const refreshGotifySettings = async () => {
@@ -444,6 +454,97 @@ function App() {
     showSuccess(tr(locale, 'Notification test Gotify envoyee.', 'Gotify test notification sent.', 'تم إرسال إشعار اختبار Gotify.'));
   };
 
+  const refreshAlertChannelsSettings = async () => {
+    if (!isAdmin) return;
+    const response = await api('/api/admin/integrations/alerts/channels', { method: 'GET' });
+    if (!response.ok) {
+      showError(await readErrorMessage(response, tr(locale, 'Lecture configuration canaux impossible.', 'Unable to load channel settings.', 'تعذر تحميل إعدادات القنوات.')));
+      return;
+    }
+    const data = await response.json().catch(() => ({}));
+    setAlertChannelsForm({
+      sms: {
+        enabled: Boolean(data?.sms?.enabled),
+        webhookUrl: data?.sms?.webhookUrl || '',
+        recipient: data?.sms?.recipient || '',
+      },
+      whatsapp: {
+        enabled: Boolean(data?.whatsapp?.enabled),
+        webhookUrl: data?.whatsapp?.webhookUrl || '',
+        recipient: data?.whatsapp?.recipient || '',
+      },
+    });
+  };
+
+  const saveAlertChannelsSettings = async () => {
+    if (!isAdmin) return;
+    const response = await api('/api/admin/integrations/alerts/channels', {
+      method: 'POST',
+      body: JSON.stringify(alertChannelsForm),
+    });
+    if (!response.ok) {
+      showError(await readErrorMessage(response, tr(locale, 'Enregistrement canaux impossible.', 'Unable to save channel settings.', 'تعذر حفظ إعدادات القنوات.')));
+      return;
+    }
+    await refreshAlertChannelsSettings();
+    await refreshAlertNotifications({ announce: true });
+    showSuccess(tr(locale, 'Canaux SMS/WhatsApp enregistres.', 'SMS/WhatsApp channels saved.', 'تم حفظ قنوات SMS/WhatsApp.'));
+  };
+
+  const testAlertChannelsSettings = async () => {
+    if (!isAdmin) return;
+    const response = await api('/api/admin/integrations/alerts/channels/test', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    if (!response.ok) {
+      showError(await readErrorMessage(response, tr(locale, 'Test canaux impossible.', 'Unable to test channels.', 'تعذر اختبار القنوات.')));
+      return;
+    }
+    await refreshAlertNotifications({ announce: true });
+    showSuccess(tr(locale, 'Test SMS/WhatsApp envoye.', 'SMS/WhatsApp test sent.', 'تم إرسال اختبار SMS/WhatsApp.'));
+  };
+
+  const refreshAlertNotifications = async (options = {}) => {
+    const announce = Boolean(options.announce);
+    if (!isAdmin) {
+      setAlertNotifications([]);
+      return;
+    }
+    const response = await api('/api/admin/integrations/alerts/notifications', { method: 'GET' });
+    if (!response.ok) {
+      showError(await readErrorMessage(response, tr(locale, 'Lecture notifications impossible.', 'Unable to load notifications.', 'تعذر تحميل الإشعارات.')));
+      return;
+    }
+    const data = await response.json().catch(() => ({}));
+    const items = Array.isArray(data.items) ? data.items : [];
+    setAlertNotifications(items);
+    if (announce) {
+      const failed = items.filter((item) => String(item.status || '').toLowerCase() === 'failed').length;
+      const pending = items.filter((item) => String(item.status || '').toLowerCase() === 'pending').length;
+      const acknowledged = items.filter((item) => String(item.status || '').toLowerCase() === 'acknowledged').length;
+      if (failed > 0) {
+        showError(tr(locale, `Canaux alertes: ${failed} en echec, ${pending} en attente, ${acknowledged} accuses.`, `Alert channels: ${failed} failed, ${pending} pending, ${acknowledged} acknowledged.`, `قنوات التنبيه: ${failed} فاشلة، ${pending} قيد الانتظار، ${acknowledged} مؤكدة.`));
+      } else {
+        showSuccess(tr(locale, `Canaux alertes: ${pending} en attente, ${acknowledged} accuses.`, `Alert channels: ${pending} pending, ${acknowledged} acknowledged.`, `قنوات التنبيه: ${pending} قيد الانتظار، ${acknowledged} مؤكدة.`));
+      }
+    }
+  };
+
+  const acknowledgeAlertNotification = async (id) => {
+    if (!isAdmin) return;
+    const response = await api('/api/admin/integrations/alerts/notifications/ack', {
+      method: 'POST',
+      body: JSON.stringify({ id: Number(id) }),
+    });
+    if (!response.ok) {
+      showError(await readErrorMessage(response, tr(locale, 'Accuse reception impossible.', 'Unable to acknowledge notification.', 'تعذر تأكيد استلام الإشعار.')));
+      return;
+    }
+    await refreshAlertNotifications({ announce: false });
+    showSuccess(tr(locale, 'Notification accusee.', 'Notification acknowledged.', 'تم تأكيد الإشعار.'));
+  };
+
   const refreshSecurityConfig = async () => {
     if (!isAdmin) return;
     const response = await api('/api/admin/security/config', { method: 'GET' });
@@ -470,10 +571,15 @@ function App() {
       adminInitPasswordConfigured: Boolean(data.adminInitPasswordConfigured),
       gotifyTokenEncKeyConfigured: Boolean(data.gotifyTokenEncKeyConfigured),
       proxyPasswordConfigured: Boolean(data.proxyPasswordConfigured),
+      alertCallbackSignatureRequired: Boolean(data.alertCallbackSignatureRequired),
+      alertCallbackSecret: '',
+      alertCallbackSecretConfigured: Boolean(data.alertCallbackSecretConfigured),
+      alertCallbackIpAllowlist: data.alertCallbackIpAllowlist || '',
       triageSlaMinutes: Number(data.triageSlaMinutes || 15),
       clearAdminInitPassword: false,
       clearGotifyTokenEncKey: false,
       clearProxyPassword: false,
+      clearAlertCallbackSecret: false,
     }));
   };
 
@@ -495,10 +601,14 @@ function App() {
         proxyUrl: securityConfigForm.proxyUrl,
         proxyUsername: securityConfigForm.proxyUsername,
         proxyPassword: securityConfigForm.proxyPassword,
+        alertCallbackSignatureRequired: Boolean(securityConfigForm.alertCallbackSignatureRequired),
+        alertCallbackSecret: securityConfigForm.alertCallbackSecret,
+        alertCallbackIpAllowlist: securityConfigForm.alertCallbackIpAllowlist,
         triageSlaMinutes: Number(securityConfigForm.triageSlaMinutes || 15),
         clearAdminInitPassword: Boolean(securityConfigForm.clearAdminInitPassword),
         clearGotifyTokenEncKey: Boolean(securityConfigForm.clearGotifyTokenEncKey),
         clearProxyPassword: Boolean(securityConfigForm.clearProxyPassword),
+        clearAlertCallbackSecret: Boolean(securityConfigForm.clearAlertCallbackSecret),
       }),
     });
     if (!response.ok) {
@@ -570,16 +680,48 @@ function App() {
     });
 
     ['state.changed', 'bed.updated', 'bed.created', 'bed.deleted', 'patient.updated', 'patient.archived', 'user.updated', 'system.backup', 'system.restore', 'system.settings'].forEach((eventName) => {
-      stream.addEventListener(eventName, () => {
+      stream.addEventListener(eventName, (event) => {
         scheduleRefresh();
         if (eventName === 'user.updated') {
           refreshUsers().catch(() => {});
         }
         if (eventName === 'system.settings') {
           refreshPublicUIConfig().catch(() => {});
+          try {
+            const payload = JSON.parse(event?.data || '{}');
+            const scope = String(payload.scope || '').trim();
+            if (scope === 'integrations.alert_channels') {
+              refreshAlertNotifications({ announce: true }).catch(() => {});
+              showSuccess(tr(locale, 'Canaux alertes mis a jour.', 'Alert channels updated.', 'تم تحديث قنوات التنبيه.'));
+            }
+          } catch (error) {
+            console.error(error);
+          }
         }
         if (eventName === 'system.restore' || eventName === 'bed.updated') {
           refreshAudit().catch(() => {});
+        }
+        if (eventName === 'system.backup') {
+          try {
+            const payload = JSON.parse(event?.data || '{}');
+            const file = String(payload.file || '').trim();
+            if (file) {
+              showSuccess(tr(locale, `Sauvegarde terminee: ${file}`, `Backup completed: ${file}`, `اكتمل النسخ الاحتياطي: ${file}`));
+            }
+          } catch (error) {
+            console.error(error);
+          }
+        }
+        if (eventName === 'system.restore') {
+          try {
+            const payload = JSON.parse(event?.data || '{}');
+            const file = String(payload.file || '').trim();
+            if (file) {
+              showSuccess(tr(locale, `Restauration appliquee: ${file}`, `Restore applied: ${file}`, `تم تطبيق الاستعادة: ${file}`));
+            }
+          } catch (error) {
+            console.error(error);
+          }
         }
       });
     });
@@ -942,7 +1084,16 @@ function App() {
 
   const openSettings = async () => {
     setScreen('settings');
-    await Promise.all([refreshUsers(), refreshAudit(true), refreshGotifySettings(), refreshSecurityConfig(), refreshSecurityHealth(), refreshUIConfig()]);
+    await Promise.all([
+      refreshUsers(),
+      refreshAudit(true),
+      refreshGotifySettings(),
+      refreshAlertChannelsSettings(),
+      refreshAlertNotifications({ announce: false }),
+      refreshSecurityConfig(),
+      refreshSecurityHealth(),
+      refreshUIConfig(),
+    ]);
   };
 
   const openAccount = () => {
@@ -966,7 +1117,10 @@ function App() {
     }
     const data = await response.json().catch(() => ({}));
     setLastBackupFile(data.file || '');
-    showSuccess(tr(locale, 'Sauvegarde SQLite creee.', 'SQLite backup created.', 'تم إنشاء نسخة SQLite الاحتياطية.'));
+    const backupFile = String(data.file || '').trim();
+    showSuccess(backupFile
+      ? tr(locale, `Sauvegarde SQLite creee: ${backupFile}`, `SQLite backup created: ${backupFile}`, `تم إنشاء نسخة SQLite الاحتياطية: ${backupFile}`)
+      : tr(locale, 'Sauvegarde SQLite creee.', 'SQLite backup created.', 'تم إنشاء نسخة SQLite الاحتياطية.'));
     await refreshAudit();
   };
 
@@ -986,7 +1140,10 @@ function App() {
         setLastBackupFile(data.file || '');
         await refreshState();
         await refreshAudit();
-        showSuccess(tr(locale, 'Restauration SQLite terminee.', 'SQLite restore completed.', 'اكتملت استعادة SQLite.'));
+        const restoredFile = String(data.file || '').trim();
+        showSuccess(restoredFile
+          ? tr(locale, `Restauration SQLite terminee depuis ${restoredFile}.`, `SQLite restore completed from ${restoredFile}.`, `اكتملت استعادة SQLite من ${restoredFile}.`)
+          : tr(locale, 'Restauration SQLite terminee.', 'SQLite restore completed.', 'اكتملت استعادة SQLite.'));
       },
     });
   };
@@ -1470,6 +1627,13 @@ function App() {
               setGotifyForm={setGotifyForm}
               saveGotifySettings={saveGotifySettings}
               testGotifySettings={testGotifySettings}
+              alertChannelsForm={alertChannelsForm}
+              setAlertChannelsForm={setAlertChannelsForm}
+              saveAlertChannelsSettings={saveAlertChannelsSettings}
+              testAlertChannelsSettings={testAlertChannelsSettings}
+              alertNotifications={alertNotifications}
+              refreshAlertNotifications={refreshAlertNotifications}
+              acknowledgeAlertNotification={acknowledgeAlertNotification}
               securityConfigForm={securityConfigForm}
               setSecurityConfigForm={setSecurityConfigForm}
               saveSecurityConfig={saveSecurityConfig}

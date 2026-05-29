@@ -396,7 +396,7 @@ func (a *App) reopenDatabase() error {
 		return err
 	}
 	sqlDB.SetMaxOpenConns(1)
-	if err := db.AutoMigrate(&Bed{}, &Patient{}, &PatientEvent{}, &AdminUser{}, &Session{}, &AuditLog{}, &AppSetting{}); err != nil {
+	if err := db.AutoMigrate(&Bed{}, &Patient{}, &PatientEvent{}, &AdminUser{}, &Session{}, &AuditLog{}, &AppSetting{}, &AlertNotification{}); err != nil {
 		return err
 	}
 	a.db = db

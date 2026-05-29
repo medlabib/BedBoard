@@ -3,13 +3,18 @@ package main
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
@@ -18,65 +23,81 @@ import (
 )
 
 const (
-	settingGotifyEnabled         = "gotify.enabled"
-	settingGotifyURL             = "gotify.url"
-	settingGotifyToken           = "gotify.token"
-	settingGotifyPriority        = "gotify.priority"
-	settingUIBrandName           = "ui.brand_name"
-	settingUIBrandLogo           = "ui.brand_logo_data_url"
-	settingUILocale              = "ui.locale"
-	settingAdminInitUsername     = "security.admin_init_username"
-	settingAdminInitPassword     = "security.admin_init_password"
-	settingForceSecureCookie     = "security.force_secure_cookie"
-	settingTrustProxyHeaders     = "security.trust_proxy_headers"
-	settingEnableHSTS            = "security.enable_hsts"
-	settingHSTSMaxAge            = "security.hsts_max_age"
-	settingHSTSIncludeSubdomains = "security.hsts_include_subdomains"
-	settingHSTSPreload           = "security.hsts_preload"
-	settingGotifyTokenEncKey     = "security.gotify_token_enc_key"
-	settingTriageSLAMinutes      = "security.triage_sla_minutes"
-	settingProxyEnabled          = "security.proxy_enabled"
-	settingProxyURL              = "security.proxy_url"
-	settingProxyUsername         = "security.proxy_username"
-	settingProxyPassword         = "security.proxy_password"
-	encryptedSecretPrefix        = "enc:v1:"
+	settingGotifyEnabled                  = "gotify.enabled"
+	settingGotifyURL                      = "gotify.url"
+	settingGotifyToken                    = "gotify.token"
+	settingGotifyPriority                 = "gotify.priority"
+	settingUIBrandName                    = "ui.brand_name"
+	settingUIBrandLogo                    = "ui.brand_logo_data_url"
+	settingUILocale                       = "ui.locale"
+	settingAdminInitUsername              = "security.admin_init_username"
+	settingAdminInitPassword              = "security.admin_init_password"
+	settingForceSecureCookie              = "security.force_secure_cookie"
+	settingTrustProxyHeaders              = "security.trust_proxy_headers"
+	settingEnableHSTS                     = "security.enable_hsts"
+	settingHSTSMaxAge                     = "security.hsts_max_age"
+	settingHSTSIncludeSubdomains          = "security.hsts_include_subdomains"
+	settingHSTSPreload                    = "security.hsts_preload"
+	settingGotifyTokenEncKey              = "security.gotify_token_enc_key"
+	settingTriageSLAMinutes               = "security.triage_sla_minutes"
+	settingProxyEnabled                   = "security.proxy_enabled"
+	settingProxyURL                       = "security.proxy_url"
+	settingProxyUsername                  = "security.proxy_username"
+	settingProxyPassword                  = "security.proxy_password"
+	settingAlertCallbackSignatureRequired = "security.alert_callback_signature_required"
+	settingAlertCallbackSecret            = "security.alert_callback_secret"
+	settingAlertCallbackIPAllowlist       = "security.alert_callback_ip_allowlist"
+	settingSMSEnabled                     = "integrations.sms.enabled"
+	settingSMSWebhookURL                  = "integrations.sms.webhook_url"
+	settingSMSRecipient                   = "integrations.sms.recipient"
+	settingWhatsAppEnabled                = "integrations.whatsapp.enabled"
+	settingWhatsAppWebhookURL             = "integrations.whatsapp.webhook_url"
+	settingWhatsAppRecipient              = "integrations.whatsapp.recipient"
+	encryptedSecretPrefix                 = "enc:v1:"
 )
 
 type securityConfigView struct {
-	AdminInitUsername           string `json:"adminInitUsername"`
-	AdminInitPasswordConfigured bool   `json:"adminInitPasswordConfigured"`
-	ForceSecureCookie           bool   `json:"forceSecureCookie"`
-	TrustProxyHeaders           bool   `json:"trustProxyHeaders"`
-	EnableHSTS                  bool   `json:"enableHsts"`
-	HSTSMaxAge                  int    `json:"hstsMaxAge"`
-	HSTSIncludeSubdomains       bool   `json:"hstsIncludeSubdomains"`
-	HSTSPreload                 bool   `json:"hstsPreload"`
-	GotifyTokenEncKeyConfigured bool   `json:"gotifyTokenEncKeyConfigured"`
-	TriageSLAMinutes            int    `json:"triageSlaMinutes"`
-	ProxyEnabled                bool   `json:"proxyEnabled"`
-	ProxyURL                    string `json:"proxyUrl"`
-	ProxyUsername               string `json:"proxyUsername"`
-	ProxyPasswordConfigured     bool   `json:"proxyPasswordConfigured"`
+	AdminInitUsername              string `json:"adminInitUsername"`
+	AdminInitPasswordConfigured    bool   `json:"adminInitPasswordConfigured"`
+	ForceSecureCookie              bool   `json:"forceSecureCookie"`
+	TrustProxyHeaders              bool   `json:"trustProxyHeaders"`
+	EnableHSTS                     bool   `json:"enableHsts"`
+	HSTSMaxAge                     int    `json:"hstsMaxAge"`
+	HSTSIncludeSubdomains          bool   `json:"hstsIncludeSubdomains"`
+	HSTSPreload                    bool   `json:"hstsPreload"`
+	GotifyTokenEncKeyConfigured    bool   `json:"gotifyTokenEncKeyConfigured"`
+	TriageSLAMinutes               int    `json:"triageSlaMinutes"`
+	ProxyEnabled                   bool   `json:"proxyEnabled"`
+	ProxyURL                       string `json:"proxyUrl"`
+	ProxyUsername                  string `json:"proxyUsername"`
+	ProxyPasswordConfigured        bool   `json:"proxyPasswordConfigured"`
+	AlertCallbackSignatureRequired bool   `json:"alertCallbackSignatureRequired"`
+	AlertCallbackSecretConfigured  bool   `json:"alertCallbackSecretConfigured"`
+	AlertCallbackIPAllowlist       string `json:"alertCallbackIpAllowlist"`
 }
 
 type securityConfigRequest struct {
-	AdminInitUsername      string `json:"adminInitUsername"`
-	AdminInitPassword      string `json:"adminInitPassword"`
-	ForceSecureCookie      bool   `json:"forceSecureCookie"`
-	TrustProxyHeaders      bool   `json:"trustProxyHeaders"`
-	EnableHSTS             bool   `json:"enableHsts"`
-	HSTSMaxAge             int    `json:"hstsMaxAge"`
-	HSTSIncludeSubdomains  bool   `json:"hstsIncludeSubdomains"`
-	HSTSPreload            bool   `json:"hstsPreload"`
-	GotifyTokenEncKey      string `json:"gotifyTokenEncKey"`
-	TriageSLAMinutes       int    `json:"triageSlaMinutes"`
-	ProxyEnabled           bool   `json:"proxyEnabled"`
-	ProxyURL               string `json:"proxyUrl"`
-	ProxyUsername          string `json:"proxyUsername"`
-	ProxyPassword          string `json:"proxyPassword"`
-	ClearProxyPassword     bool   `json:"clearProxyPassword"`
-	ClearAdminInitPassword bool   `json:"clearAdminInitPassword"`
-	ClearGotifyTokenEncKey bool   `json:"clearGotifyTokenEncKey"`
+	AdminInitUsername              string `json:"adminInitUsername"`
+	AdminInitPassword              string `json:"adminInitPassword"`
+	ForceSecureCookie              bool   `json:"forceSecureCookie"`
+	TrustProxyHeaders              bool   `json:"trustProxyHeaders"`
+	EnableHSTS                     bool   `json:"enableHsts"`
+	HSTSMaxAge                     int    `json:"hstsMaxAge"`
+	HSTSIncludeSubdomains          bool   `json:"hstsIncludeSubdomains"`
+	HSTSPreload                    bool   `json:"hstsPreload"`
+	GotifyTokenEncKey              string `json:"gotifyTokenEncKey"`
+	TriageSLAMinutes               int    `json:"triageSlaMinutes"`
+	ProxyEnabled                   bool   `json:"proxyEnabled"`
+	ProxyURL                       string `json:"proxyUrl"`
+	ProxyUsername                  string `json:"proxyUsername"`
+	ProxyPassword                  string `json:"proxyPassword"`
+	AlertCallbackSignatureRequired bool   `json:"alertCallbackSignatureRequired"`
+	AlertCallbackSecret            string `json:"alertCallbackSecret"`
+	AlertCallbackIPAllowlist       string `json:"alertCallbackIpAllowlist"`
+	ClearProxyPassword             bool   `json:"clearProxyPassword"`
+	ClearAlertCallbackSecret       bool   `json:"clearAlertCallbackSecret"`
+	ClearAdminInitPassword         bool   `json:"clearAdminInitPassword"`
+	ClearGotifyTokenEncKey         bool   `json:"clearGotifyTokenEncKey"`
 }
 
 type uiConfigView struct {
@@ -95,6 +116,47 @@ type uiConfigRequest struct {
 type gotifyTestRequest struct {
 	Title   string `json:"title"`
 	Message string `json:"message"`
+}
+
+type outboundAlertChannel struct {
+	Enabled    bool   `json:"enabled"`
+	WebhookURL string `json:"webhookUrl"`
+	Recipient  string `json:"recipient"`
+}
+
+type alertChannelsSettingsView struct {
+	SMS      outboundAlertChannel `json:"sms"`
+	WhatsApp outboundAlertChannel `json:"whatsapp"`
+}
+
+type alertChannelsSettingsRequest struct {
+	SMS      outboundAlertChannel `json:"sms"`
+	WhatsApp outboundAlertChannel `json:"whatsapp"`
+}
+
+type alertNotificationView struct {
+	ID             uint       `json:"id"`
+	Channel        string     `json:"channel"`
+	Recipient      string     `json:"recipient"`
+	Title          string     `json:"title"`
+	Message        string     `json:"message"`
+	Status         string     `json:"status"`
+	ErrorText      string     `json:"errorText"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	AcknowledgedAt *time.Time `json:"acknowledgedAt"`
+}
+
+type alertChannelsTestRequest struct {
+	Title   string `json:"title"`
+	Message string `json:"message"`
+}
+
+type alertNotificationAckRequest struct {
+	ID uint `json:"id"`
+}
+
+type alertTokenAckRequest struct {
+	Token string `json:"token"`
 }
 
 func normalizeUILocale(value string) string {
@@ -127,6 +189,33 @@ func validateGotifyURL(raw string) error {
 	return nil
 }
 
+func validateWebhookURL(raw string) error {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return fmt.Errorf("invalid webhook url")
+	}
+	scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("webhook url must use http or https")
+	}
+	if strings.TrimSpace(parsed.Host) == "" {
+		return fmt.Errorf("webhook url host is required")
+	}
+	return nil
+}
+
+func sanitizeRecipient(value string) string {
+	cleaned := strings.TrimSpace(value)
+	if len(cleaned) > 120 {
+		return cleaned[:120]
+	}
+	return cleaned
+}
+
 func validateProxyURL(raw string) error {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -142,6 +231,159 @@ func validateProxyURL(raw string) error {
 	}
 	if strings.TrimSpace(parsed.Host) == "" {
 		return fmt.Errorf("proxy url host is required")
+	}
+	return nil
+}
+
+func normalizeIPAllowlist(raw string) string {
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == '\r' || r == '\t'
+	})
+	clean := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		clean = append(clean, trimmed)
+	}
+	return strings.Join(clean, ",")
+}
+
+func validateIPAllowlist(raw string) error {
+	normalized := normalizeIPAllowlist(raw)
+	if normalized == "" {
+		return nil
+	}
+	for _, candidate := range strings.Split(normalized, ",") {
+		entry := strings.TrimSpace(candidate)
+		if entry == "" {
+			continue
+		}
+		if strings.Contains(entry, "/") {
+			if _, err := netip.ParsePrefix(entry); err != nil {
+				return fmt.Errorf("invalid allowlist CIDR: %s", entry)
+			}
+			continue
+		}
+		if ip := net.ParseIP(entry); ip == nil {
+			return fmt.Errorf("invalid allowlist IP: %s", entry)
+		}
+	}
+	return nil
+}
+
+func ipAllowedByAllowlist(clientIP, allowlist string) bool {
+	normalized := normalizeIPAllowlist(allowlist)
+	if normalized == "" {
+		return true
+	}
+	ipAddr, err := netip.ParseAddr(strings.TrimSpace(clientIP))
+	if err != nil {
+		return false
+	}
+	for _, candidate := range strings.Split(normalized, ",") {
+		entry := strings.TrimSpace(candidate)
+		if entry == "" {
+			continue
+		}
+		if strings.Contains(entry, "/") {
+			prefix, err := netip.ParsePrefix(entry)
+			if err == nil && prefix.Contains(ipAddr) {
+				return true
+			}
+			continue
+		}
+		allowedIP, err := netip.ParseAddr(entry)
+		if err == nil && allowedIP == ipAddr {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) extractClientIP(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if a.getSettingBool(settingTrustProxyHeaders, envBool("TRUST_PROXY_HEADERS", false)) {
+		if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
+			parts := strings.Split(forwarded, ",")
+			if len(parts) > 0 {
+				return strings.TrimSpace(parts[0])
+			}
+		}
+		if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
+			return realIP
+		}
+	}
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err == nil {
+		return strings.TrimSpace(host)
+	}
+	return strings.TrimSpace(r.RemoteAddr)
+}
+
+func parseSignatureHeader(raw string) string {
+	signature := strings.TrimSpace(raw)
+	signature = strings.TrimPrefix(signature, "sha256=")
+	return strings.TrimSpace(signature)
+}
+
+func computeCallbackHMAC(secret, timestamp string, payload []byte) string {
+	h := hmac.New(sha256.New, []byte(secret))
+	_, _ = h.Write([]byte(timestamp))
+	_, _ = h.Write([]byte("."))
+	_, _ = h.Write(payload)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func (a *App) verifyAlertAckCallback(r *http.Request, rawBody []byte) error {
+	allowlist := strings.TrimSpace(firstNonEmpty(a.getSettingValue(settingAlertCallbackIPAllowlist), os.Getenv("ALERT_CALLBACK_IP_ALLOWLIST")))
+	clientIP := a.extractClientIP(r)
+	if !ipAllowedByAllowlist(clientIP, allowlist) {
+		return fmt.Errorf("callback source ip not allowed")
+	}
+
+	signatureRequired := a.getSettingBool(settingAlertCallbackSignatureRequired, envBool("ALERT_CALLBACK_SIGNATURE_REQUIRED", true))
+	if !signatureRequired {
+		return nil
+	}
+	secretValue := strings.TrimSpace(a.getSettingValue(settingAlertCallbackSecret))
+	secret, err := a.decryptSecretValue(secretValue)
+	if err != nil {
+		appLog.Warnw("alert callback secret decrypt failed", "error", err)
+		secret = ""
+	}
+	if strings.TrimSpace(secret) == "" {
+		secret = strings.TrimSpace(os.Getenv("ALERT_CALLBACK_SECRET"))
+	}
+	if strings.TrimSpace(secret) == "" {
+		return fmt.Errorf("alert callback secret not configured")
+	}
+
+	timestampHeader := strings.TrimSpace(r.Header.Get("X-BedBoard-Timestamp"))
+	if timestampHeader == "" {
+		return fmt.Errorf("missing callback timestamp")
+	}
+	timestampValue, err := strconv.ParseInt(timestampHeader, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid callback timestamp")
+	}
+	now := time.Now().Unix()
+	if timestampValue < now-300 || timestampValue > now+300 {
+		return fmt.Errorf("callback timestamp out of range")
+	}
+	signatureHeader := parseSignatureHeader(r.Header.Get("X-BedBoard-Signature"))
+	if signatureHeader == "" {
+		return fmt.Errorf("missing callback signature")
+	}
+	if _, err := hex.DecodeString(signatureHeader); err != nil {
+		return fmt.Errorf("invalid callback signature encoding")
+	}
+	expectedSignature := computeCallbackHMAC(secret, timestampHeader, rawBody)
+	if subtle.ConstantTimeCompare([]byte(strings.ToLower(signatureHeader)), []byte(strings.ToLower(expectedSignature))) != 1 {
+		return fmt.Errorf("invalid callback signature")
 	}
 	return nil
 }
@@ -203,7 +445,7 @@ func (a *App) getGotifyConfig() gotifyConfig {
 	tokenValue := strings.TrimSpace(a.getSettingValue(settingGotifyToken))
 	token, err := a.decryptSecretValue(tokenValue)
 	if err != nil {
-		log.Printf("gotify token decrypt failed: %v", err)
+		appLog.Warnw("gotify token decrypt failed", "error", err)
 		token = ""
 	}
 	priority := 8
@@ -233,7 +475,7 @@ func (a *App) getGotifyConfig() gotifyConfig {
 	proxyPasswordValue := strings.TrimSpace(a.getSettingValue(settingProxyPassword))
 	proxyPassword, err := a.decryptSecretValue(proxyPasswordValue)
 	if err != nil {
-		log.Printf("proxy password decrypt failed: %v", err)
+		appLog.Warnw("proxy password decrypt failed", "error", err)
 		proxyPassword = ""
 	}
 	proxyEnabled := a.getSettingBool(settingProxyEnabled, false)
@@ -368,6 +610,205 @@ func (a *App) handleGotifyTest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+func (a *App) getAlertChannelsConfig() alertChannelsSettingsView {
+	return alertChannelsSettingsView{
+		SMS: outboundAlertChannel{
+			Enabled:    a.getSettingBool(settingSMSEnabled, envBool("SMS_ALERTS_ENABLED", false)),
+			WebhookURL: strings.TrimSpace(firstNonEmpty(a.getSettingValue(settingSMSWebhookURL), os.Getenv("SMS_ALERTS_WEBHOOK_URL"))),
+			Recipient:  sanitizeRecipient(firstNonEmpty(a.getSettingValue(settingSMSRecipient), os.Getenv("SMS_ALERTS_RECIPIENT"))),
+		},
+		WhatsApp: outboundAlertChannel{
+			Enabled:    a.getSettingBool(settingWhatsAppEnabled, envBool("WHATSAPP_ALERTS_ENABLED", false)),
+			WebhookURL: strings.TrimSpace(firstNonEmpty(a.getSettingValue(settingWhatsAppWebhookURL), os.Getenv("WHATSAPP_ALERTS_WEBHOOK_URL"))),
+			Recipient:  sanitizeRecipient(firstNonEmpty(a.getSettingValue(settingWhatsAppRecipient), os.Getenv("WHATSAPP_ALERTS_RECIPIENT"))),
+		},
+	}
+}
+
+func firstNonEmpty(primary, fallback string) string {
+	trimmed := strings.TrimSpace(primary)
+	if trimmed != "" {
+		return trimmed
+	}
+	return strings.TrimSpace(fallback)
+}
+
+func (a *App) handleAlertChannelsSettings(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, a.getAlertChannelsConfig())
+	case http.MethodPost:
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		var req alertChannelsSettingsRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+		req.SMS.WebhookURL = strings.TrimSpace(req.SMS.WebhookURL)
+		req.WhatsApp.WebhookURL = strings.TrimSpace(req.WhatsApp.WebhookURL)
+		req.SMS.Recipient = sanitizeRecipient(req.SMS.Recipient)
+		req.WhatsApp.Recipient = sanitizeRecipient(req.WhatsApp.Recipient)
+		if req.SMS.Enabled && req.SMS.WebhookURL == "" {
+			http.Error(w, "sms webhook url required when enabled", http.StatusBadRequest)
+			return
+		}
+		if req.WhatsApp.Enabled && req.WhatsApp.WebhookURL == "" {
+			http.Error(w, "whatsapp webhook url required when enabled", http.StatusBadRequest)
+			return
+		}
+		if err := validateWebhookURL(req.SMS.WebhookURL); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := validateWebhookURL(req.WhatsApp.WebhookURL); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := a.upsertSettingValue(settingSMSEnabled, strconv.FormatBool(req.SMS.Enabled)); err != nil {
+			http.Error(w, "save failed", http.StatusInternalServerError)
+			return
+		}
+		if err := a.upsertSettingValue(settingSMSWebhookURL, req.SMS.WebhookURL); err != nil {
+			http.Error(w, "save failed", http.StatusInternalServerError)
+			return
+		}
+		if err := a.upsertSettingValue(settingSMSRecipient, req.SMS.Recipient); err != nil {
+			http.Error(w, "save failed", http.StatusInternalServerError)
+			return
+		}
+		if err := a.upsertSettingValue(settingWhatsAppEnabled, strconv.FormatBool(req.WhatsApp.Enabled)); err != nil {
+			http.Error(w, "save failed", http.StatusInternalServerError)
+			return
+		}
+		if err := a.upsertSettingValue(settingWhatsAppWebhookURL, req.WhatsApp.WebhookURL); err != nil {
+			http.Error(w, "save failed", http.StatusInternalServerError)
+			return
+		}
+		if err := a.upsertSettingValue(settingWhatsAppRecipient, req.WhatsApp.Recipient); err != nil {
+			http.Error(w, "save failed", http.StatusInternalServerError)
+			return
+		}
+		a.broadcastEvent("system.settings", map[string]any{"scope": "integrations.alert_channels"})
+		writeJSON(w, http.StatusOK, a.getAlertChannelsConfig())
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (a *App) handleAlertChannelsTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req alertChannelsTestRequest
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		title = "BedBoard Channel Test"
+	}
+	message := strings.TrimSpace(req.Message)
+	if message == "" {
+		message = "This is a test outbound message from BedBoard."
+	}
+	payload := alertPayload{
+		Title:      title,
+		Reason:     "admin_test",
+		Patient:    message,
+		Room:       "N/A",
+		Bed:        "N/A",
+		SourceUser: "admin",
+		TimeHM:     time.Now().Format("15:04"),
+	}
+	if err := a.sendAlertChannels(payload); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (a *App) handleAlertNotifications(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	notifications := make([]AlertNotification, 0)
+	if err := a.db.Order("created_at desc").Limit(200).Find(&notifications).Error; err != nil {
+		http.Error(w, "list failed", http.StatusInternalServerError)
+		return
+	}
+	views := make([]alertNotificationView, 0, len(notifications))
+	for _, item := range notifications {
+		views = append(views, alertNotificationView{
+			ID:             item.ID,
+			Channel:        item.Channel,
+			Recipient:      item.Recipient,
+			Title:          item.Title,
+			Message:        item.Message,
+			Status:         item.Status,
+			ErrorText:      item.ErrorText,
+			CreatedAt:      item.CreatedAt,
+			AcknowledgedAt: item.AcknowledgedAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": views})
+}
+
+func (a *App) handleAlertNotificationAck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req alertNotificationAckRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	if req.ID == 0 {
+		http.Error(w, "id required", http.StatusBadRequest)
+		return
+	}
+	if err := a.acknowledgeAlertNotificationByID(req.ID); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (a *App) handleAlertAckByToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	rawBody, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if err := a.verifyAlertAckCallback(r, rawBody); err != nil {
+		appLog.Warnw("alert callback rejected", "error", err, "remote", a.extractClientIP(r))
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	var req alertTokenAckRequest
+	if err := json.Unmarshal(rawBody, &req); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	token := strings.TrimSpace(req.Token)
+	if token == "" {
+		http.Error(w, "token required", http.StatusBadRequest)
+		return
+	}
+	if err := a.acknowledgeAlertNotificationByToken(token); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 func (a *App) encryptSecretValue(value string) (string, error) {
 	if strings.TrimSpace(value) == "" {
 		return "", nil
@@ -479,21 +920,34 @@ func (a *App) getSecurityConfigView() securityConfigView {
 	proxyURL := strings.TrimSpace(a.getSettingValue(settingProxyURL))
 	proxyUsername := strings.TrimSpace(a.getSettingValue(settingProxyUsername))
 	proxyPassword := strings.TrimSpace(a.getSettingValue(settingProxyPassword))
+	callbackSecretValue := strings.TrimSpace(a.getSettingValue(settingAlertCallbackSecret))
+	callbackSecret, err := a.decryptSecretValue(callbackSecretValue)
+	if err != nil {
+		appLog.Warnw("alert callback secret decrypt failed", "error", err)
+		callbackSecret = ""
+	}
+	if callbackSecret == "" {
+		callbackSecret = strings.TrimSpace(os.Getenv("ALERT_CALLBACK_SECRET"))
+	}
+	callbackAllowlist := normalizeIPAllowlist(firstNonEmpty(a.getSettingValue(settingAlertCallbackIPAllowlist), os.Getenv("ALERT_CALLBACK_IP_ALLOWLIST")))
 	return securityConfigView{
-		AdminInitUsername:           username,
-		AdminInitPasswordConfigured: adminPwd != "",
-		ForceSecureCookie:           a.getSettingBool(settingForceSecureCookie, envBool("FORCE_SECURE_COOKIE", false)),
-		TrustProxyHeaders:           a.getSettingBool(settingTrustProxyHeaders, envBool("TRUST_PROXY_HEADERS", false)),
-		EnableHSTS:                  a.getSettingBool(settingEnableHSTS, envBool("ENABLE_HSTS", false)),
-		HSTSMaxAge:                  a.getSettingInt(settingHSTSMaxAge, envInt("HSTS_MAX_AGE", 31536000)),
-		HSTSIncludeSubdomains:       a.getSettingBool(settingHSTSIncludeSubdomains, envBool("HSTS_INCLUDE_SUBDOMAINS", true)),
-		HSTSPreload:                 a.getSettingBool(settingHSTSPreload, envBool("HSTS_PRELOAD", false)),
-		GotifyTokenEncKeyConfigured: encKey != "",
-		TriageSLAMinutes:            a.getSettingInt(settingTriageSLAMinutes, envInt("TRIAGE_SLA_MINUTES", 15)),
-		ProxyEnabled:                a.getSettingBool(settingProxyEnabled, false),
-		ProxyURL:                    proxyURL,
-		ProxyUsername:               proxyUsername,
-		ProxyPasswordConfigured:     proxyPassword != "",
+		AdminInitUsername:              username,
+		AdminInitPasswordConfigured:    adminPwd != "",
+		ForceSecureCookie:              a.getSettingBool(settingForceSecureCookie, envBool("FORCE_SECURE_COOKIE", false)),
+		TrustProxyHeaders:              a.getSettingBool(settingTrustProxyHeaders, envBool("TRUST_PROXY_HEADERS", false)),
+		EnableHSTS:                     a.getSettingBool(settingEnableHSTS, envBool("ENABLE_HSTS", false)),
+		HSTSMaxAge:                     a.getSettingInt(settingHSTSMaxAge, envInt("HSTS_MAX_AGE", 31536000)),
+		HSTSIncludeSubdomains:          a.getSettingBool(settingHSTSIncludeSubdomains, envBool("HSTS_INCLUDE_SUBDOMAINS", true)),
+		HSTSPreload:                    a.getSettingBool(settingHSTSPreload, envBool("HSTS_PRELOAD", false)),
+		GotifyTokenEncKeyConfigured:    encKey != "",
+		TriageSLAMinutes:               a.getSettingInt(settingTriageSLAMinutes, envInt("TRIAGE_SLA_MINUTES", 15)),
+		ProxyEnabled:                   a.getSettingBool(settingProxyEnabled, false),
+		ProxyURL:                       proxyURL,
+		ProxyUsername:                  proxyUsername,
+		ProxyPasswordConfigured:        proxyPassword != "",
+		AlertCallbackSignatureRequired: a.getSettingBool(settingAlertCallbackSignatureRequired, envBool("ALERT_CALLBACK_SIGNATURE_REQUIRED", true)),
+		AlertCallbackSecretConfigured:  strings.TrimSpace(callbackSecret) != "",
+		AlertCallbackIPAllowlist:       callbackAllowlist,
 	}
 }
 
@@ -530,6 +984,11 @@ func (a *App) handleSecurityConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := validateProxyURL(proxyURL); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		callbackAllowlist := normalizeIPAllowlist(req.AlertCallbackIPAllowlist)
+		if err := validateIPAllowlist(callbackAllowlist); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -600,6 +1059,30 @@ func (a *App) handleSecurityConfig(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if err := a.upsertSettingValue(settingProxyPassword, encryptedPassword); err != nil {
+				http.Error(w, "save failed", http.StatusInternalServerError)
+				return
+			}
+		}
+		if err := a.upsertSettingValue(settingAlertCallbackSignatureRequired, strconv.FormatBool(req.AlertCallbackSignatureRequired)); err != nil {
+			http.Error(w, "save failed", http.StatusInternalServerError)
+			return
+		}
+		if err := a.upsertSettingValue(settingAlertCallbackIPAllowlist, callbackAllowlist); err != nil {
+			http.Error(w, "save failed", http.StatusInternalServerError)
+			return
+		}
+		if req.ClearAlertCallbackSecret {
+			if err := a.upsertSettingValue(settingAlertCallbackSecret, ""); err != nil {
+				http.Error(w, "save failed", http.StatusInternalServerError)
+				return
+			}
+		} else if strings.TrimSpace(req.AlertCallbackSecret) != "" {
+			encryptedCallbackSecret, err := a.encryptSecretValue(strings.TrimSpace(req.AlertCallbackSecret))
+			if err != nil {
+				http.Error(w, "callback secret encryption failed", http.StatusInternalServerError)
+				return
+			}
+			if err := a.upsertSettingValue(settingAlertCallbackSecret, encryptedCallbackSecret); err != nil {
 				http.Error(w, "save failed", http.StatusInternalServerError)
 				return
 			}

@@ -6,7 +6,7 @@
 A local-first emergency board for bed occupancy and patient flow.
 
 <p align="center">
-  <img alt="Release Channel" src="https://img.shields.io/badge/Release%20Channel-beta--1.0.0-8FAADC?style=flat-square" />
+  <img alt="Release Channel" src="https://img.shields.io/badge/Release%20Channel-beta--1.0.1-8FAADC?style=flat-square" />
   <img alt="Legacy Tags" src="https://img.shields.io/badge/Legacy%20Tags-alpha--v*-B5C7A4?style=flat-square" />
   <img alt="Backend Coverage" src="https://img.shields.io/badge/Backend%20Coverage-26.8%25-7AB893?style=flat-square" />
   <img alt="Frontend Coverage" src="https://img.shields.io/badge/Frontend%20Coverage-32.82%25-6FA7C7?style=flat-square" />
@@ -54,6 +54,7 @@ When reporting bugs or requesting features, use the provided GitHub templates fo
 - White-label branding and localization (French, English, Arabic).
 - Security controls and health checks in-app.
 - Gotify integration with encrypted token support.
+- Outbound SMS/WhatsApp webhook channels with acknowledgement tracking.
 - Patient timeline and operational KPIs (SLA, waits, consultations/hour).
 - Bed assignment dropdown enriched with patient tags (type, triage, status).
 - Extended patient categories including urgences differees.
@@ -81,7 +82,7 @@ Default URL: http://localhost:8080
 
 - Parameters: app name, logo, locale, user management.
 - Security: bootstrap credentials, cookie/hsts/proxy controls, health checks.
-- Integrations: Gotify URL/token/priority and test action.
+- Integrations: Gotify plus SMS/WhatsApp webhook channels and acknowledgement log.
 - Operations: backup/restore and audit management.
 
 ### Security Keys
@@ -97,6 +98,19 @@ Default URL: http://localhost:8080
 | security.hsts_include_subdomains | HSTS includeSubDomains flag |
 | security.hsts_preload | HSTS preload flag |
 | security.gotify_token_enc_key | Encryption key for Gotify token |
+| security.proxy_enabled | Enable outbound proxy for alert integrations |
+| security.proxy_url | Outbound proxy URL |
+| security.proxy_username | Outbound proxy username |
+| security.proxy_password | Outbound proxy password (encrypted) |
+| security.alert_callback_signature_required | Require HMAC signature for public alert callback |
+| security.alert_callback_secret | Shared secret for callback signature verification |
+| security.alert_callback_ip_allowlist | Allowed source IP/CIDR list for callback endpoint |
+| integrations.sms.enabled | Enable SMS outbound channel |
+| integrations.sms.webhook_url | SMS gateway webhook URL |
+| integrations.sms.recipient | SMS default recipient |
+| integrations.whatsapp.enabled | Enable WhatsApp outbound channel |
+| integrations.whatsapp.webhook_url | WhatsApp gateway webhook URL |
+| integrations.whatsapp.recipient | WhatsApp default recipient |
 
 ### Security and Operations Endpoints
 
@@ -105,6 +119,16 @@ Default URL: http://localhost:8080
 - Admin UI config: GET /api/admin/ui/config, POST /api/admin/ui/config
 - Gotify config: GET /api/admin/integrations/gotify, POST /api/admin/integrations/gotify
 - Gotify test: POST /api/admin/integrations/gotify/test
+- Alert channels config: GET/POST /api/admin/integrations/alerts/channels
+- Alert channels test: POST /api/admin/integrations/alerts/channels/test
+- Alert notifications feed: GET /api/admin/integrations/alerts/notifications
+- Alert acknowledgement (admin): POST /api/admin/integrations/alerts/notifications/ack
+- Alert acknowledgement (gateway callback): POST /api/integrations/alerts/ack
+
+Public callback security headers (when signature verification is enabled):
+
+- `X-BedBoard-Timestamp`: Unix seconds timestamp
+- `X-BedBoard-Signature`: `sha256=<hex(hmac_sha256(secret, timestamp + "." + raw_body))>`
 
 ## Testing, Coverage, and Performance
 
@@ -134,6 +158,14 @@ Default URL: http://localhost:8080
 go test ./backend/... -coverprofile=coverage.out -covermode=atomic
 go tool cover -func=coverage.out | awk '/^total:/{print $NF}'
 
+# Performance suites (opt-in)
+go test ./backend/... -tags perf -run TestAPILatencySnapshot -v
+go test ./backend/... -tags perf -bench . -benchmem
+
+# Security scanners
+go vet ./backend/...
+govulncheck ./backend/...
+
 # Frontend
 npm --prefix frontend install
 npm --prefix frontend run test
@@ -147,7 +179,7 @@ npm --prefix frontend run test:coverage
 ```bash
 npm --prefix frontend run build
 bash scripts/prepare-backend-assets.sh
-go build ./backend
+go build -o /tmp/bedboard ./backend
 ```
 
 ### Local Release Artifacts
@@ -215,3 +247,8 @@ The signed release workflow in .github/workflows/release-signed.yml automaticall
 - BedBoard is local-first: protect exposure with strict network controls.
 - Prefer an HTTPS reverse proxy in production.
 - Rotate admin credentials and encryption keys regularly.
+
+## License
+
+This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0).
+See LICENSE for the full legal text.

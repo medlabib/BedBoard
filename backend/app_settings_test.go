@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
+	"time"
 )
 
 func TestValidateGotifyURL(t *testing.T) {
@@ -56,6 +58,76 @@ func TestValidateProxyURL(t *testing.T) {
 				t.Fatalf("did not expect error for url %q: %v", tc.url, err)
 			}
 		})
+	}
+}
+
+func TestValidateIPAllowlist(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{name: "empty accepted", value: "", wantErr: false},
+		{name: "single ip", value: "127.0.0.1", wantErr: false},
+		{name: "mixed ip and cidr", value: "127.0.0.1,10.0.0.0/24", wantErr: false},
+		{name: "invalid ip", value: "not-an-ip", wantErr: true},
+		{name: "invalid cidr", value: "10.0.0.0/99", wantErr: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateIPAllowlist(tc.value)
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected error for allowlist %q", tc.value)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("did not expect error for allowlist %q: %v", tc.value, err)
+			}
+		})
+	}
+}
+
+func TestVerifyAlertAckCallback(t *testing.T) {
+	app, cleanup := setupTestApp(t)
+	defer cleanup()
+
+	if err := app.upsertSettingValue(settingAlertCallbackSignatureRequired, "true"); err != nil {
+		t.Fatalf("save signature required: %v", err)
+	}
+	if err := app.upsertSettingValue(settingAlertCallbackSecret, "shared-secret"); err != nil {
+		t.Fatalf("save callback secret: %v", err)
+	}
+	if err := app.upsertSettingValue(settingAlertCallbackIPAllowlist, "127.0.0.1"); err != nil {
+		t.Fatalf("save ip allowlist: %v", err)
+	}
+
+	body := []byte(`{"token":"abc"}`)
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	sig := computeCallbackHMAC("shared-secret", ts, body)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/integrations/alerts/ack", mustJSONBody(t, map[string]any{"token": "abc"}))
+	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("X-BedBoard-Timestamp", ts)
+	req.Header.Set("X-BedBoard-Signature", "sha256="+sig)
+
+	if err := app.verifyAlertAckCallback(req, body); err != nil {
+		t.Fatalf("expected callback verification success, got %v", err)
+	}
+
+	reqBadSig := httptest.NewRequest(http.MethodPost, "/api/integrations/alerts/ack", mustJSONBody(t, map[string]any{"token": "abc"}))
+	reqBadSig.RemoteAddr = "127.0.0.1:12345"
+	reqBadSig.Header.Set("X-BedBoard-Timestamp", ts)
+	reqBadSig.Header.Set("X-BedBoard-Signature", "sha256=deadbeef")
+	if err := app.verifyAlertAckCallback(reqBadSig, body); err == nil {
+		t.Fatalf("expected callback verification failure for invalid signature")
+	}
+
+	reqBadIP := httptest.NewRequest(http.MethodPost, "/api/integrations/alerts/ack", mustJSONBody(t, map[string]any{"token": "abc"}))
+	reqBadIP.RemoteAddr = "203.0.113.10:12345"
+	reqBadIP.Header.Set("X-BedBoard-Timestamp", ts)
+	reqBadIP.Header.Set("X-BedBoard-Signature", "sha256="+sig)
+	if err := app.verifyAlertAckCallback(reqBadIP, body); err == nil {
+		t.Fatalf("expected callback verification failure for disallowed ip")
 	}
 }
 

@@ -17,6 +17,13 @@ export default function SettingsScreen({
   setGotifyForm,
   saveGotifySettings,
   testGotifySettings,
+  alertChannelsForm,
+  setAlertChannelsForm,
+  saveAlertChannelsSettings,
+  testAlertChannelsSettings,
+  alertNotifications,
+  refreshAlertNotifications,
+  acknowledgeAlertNotification,
   securityConfigForm,
   setSecurityConfigForm,
   saveSecurityConfig,
@@ -271,6 +278,28 @@ export default function SettingsScreen({
                 </select>
               </label>
               <label>
+                {tr(locale, 'Verification signature callback', 'Callback signature verification', 'التحقق من توقيع الاستدعاء')}
+                <select className="form-select" value={securityConfigForm.alertCallbackSignatureRequired ? '1' : '0'} onChange={(event) => setSecurityConfigForm((current) => ({ ...current, alertCallbackSignatureRequired: event.target.value === '1' }))}>
+                  <option value="1">{tr(locale, 'Obligatoire', 'Required', 'إلزامي')}</option>
+                  <option value="0">{tr(locale, 'Desactive', 'Disabled', 'معطل')}</option>
+                </select>
+              </label>
+              <label>
+                {tr(locale, 'Secret callback alertes', 'Alert callback secret', 'سر استدعاء التنبيه')}
+                <input className="form-control" value={securityConfigForm.alertCallbackSecret} type="password" placeholder={securityConfigForm.alertCallbackSecretConfigured ? tr(locale, 'Deja configure', 'Already configured', 'مضبوط مسبقًا') : tr(locale, 'Entrer secret partage', 'Enter shared secret', 'أدخل سرًا مشتركًا')} onChange={(event) => setSecurityConfigForm((current) => ({ ...current, alertCallbackSecret: event.target.value }))} />
+              </label>
+              <label>
+                {tr(locale, 'IP allowlist callback (CSV/CIDR)', 'Callback IP allowlist (CSV/CIDR)', 'قائمة سماح IP للاستدعاء (CSV/CIDR)')}
+                <input className="form-control" value={securityConfigForm.alertCallbackIpAllowlist} type="text" placeholder="127.0.0.1,10.0.0.0/24" onChange={(event) => setSecurityConfigForm((current) => ({ ...current, alertCallbackIpAllowlist: event.target.value }))} />
+              </label>
+              <label>
+                {tr(locale, 'Reinitialiser secret callback', 'Reset callback secret', 'إعادة ضبط سر الاستدعاء')}
+                <select className="form-select" value={securityConfigForm.clearAlertCallbackSecret ? '1' : '0'} onChange={(event) => setSecurityConfigForm((current) => ({ ...current, clearAlertCallbackSecret: event.target.value === '1' }))}>
+                  <option value="0">{tr(locale, 'Non', 'No', 'لا')}</option>
+                  <option value="1">{tr(locale, 'Oui', 'Yes', 'نعم')}</option>
+                </select>
+              </label>
+              <label>
                 {tr(locale, 'Reinitialiser GOTIFY_TOKEN_ENC_KEY', 'Reset GOTIFY_TOKEN_ENC_KEY', 'إعادة ضبط GOTIFY_TOKEN_ENC_KEY')}
                 <select className="form-select" value={securityConfigForm.clearGotifyTokenEncKey ? '1' : '0'} onChange={(event) => setSecurityConfigForm((current) => ({ ...current, clearGotifyTokenEncKey: event.target.value === '1' }))}>
                   <option value="0">{tr(locale, 'Non', 'No', 'لا')}</option>
@@ -376,6 +405,85 @@ export default function SettingsScreen({
               </label>
               <button className="btn primary" type="button" onClick={importPatients}>{tr(locale, 'Importer patients', 'Import patients', 'استيراد المرضى')}</button>
             </div>
+          </div>
+
+          <div className="form-card settings-focus-card">
+            <h2>{tr(locale, 'Canaux SMS / WhatsApp', 'SMS / WhatsApp channels', 'قنوات SMS / WhatsApp')}</h2>
+            <p className="small-note">{tr(locale, 'Configurer les webhooks de sortie et les destinataires. Chaque envoi enregistre un statut d accusé.', 'Configure outbound webhooks and recipients. Each send stores an acknowledgment status.', 'قم بتكوين webhooks الصادرة والمستلمين. كل إرسال يسجل حالة تأكيد.')}</p>
+            <div className="form-grid">
+              <label>
+                {tr(locale, 'SMS actif', 'SMS enabled', 'تفعيل SMS')}
+                <select className="form-select" value={alertChannelsForm.sms.enabled ? '1' : '0'} onChange={(event) => setAlertChannelsForm((current) => ({ ...current, sms: { ...current.sms, enabled: event.target.value === '1' } }))}>
+                  <option value="0">{tr(locale, 'Non', 'No', 'لا')}</option>
+                  <option value="1">{tr(locale, 'Oui', 'Yes', 'نعم')}</option>
+                </select>
+              </label>
+              <label>
+                {tr(locale, 'SMS webhook URL', 'SMS webhook URL', 'رابط SMS webhook')}
+                <input className="form-control" value={alertChannelsForm.sms.webhookUrl} type="text" placeholder="https://gateway.example.com/sms" onChange={(event) => setAlertChannelsForm((current) => ({ ...current, sms: { ...current.sms, webhookUrl: event.target.value } }))} />
+              </label>
+              <label>
+                {tr(locale, 'Destinataire SMS', 'SMS recipient', 'مستلم SMS')}
+                <input className="form-control" value={alertChannelsForm.sms.recipient} type="text" placeholder="+212600000000" onChange={(event) => setAlertChannelsForm((current) => ({ ...current, sms: { ...current.sms, recipient: event.target.value } }))} />
+              </label>
+
+              <label>
+                {tr(locale, 'WhatsApp actif', 'WhatsApp enabled', 'تفعيل WhatsApp')}
+                <select className="form-select" value={alertChannelsForm.whatsapp.enabled ? '1' : '0'} onChange={(event) => setAlertChannelsForm((current) => ({ ...current, whatsapp: { ...current.whatsapp, enabled: event.target.value === '1' } }))}>
+                  <option value="0">{tr(locale, 'Non', 'No', 'لا')}</option>
+                  <option value="1">{tr(locale, 'Oui', 'Yes', 'نعم')}</option>
+                </select>
+              </label>
+              <label>
+                {tr(locale, 'WhatsApp webhook URL', 'WhatsApp webhook URL', 'رابط WhatsApp webhook')}
+                <input className="form-control" value={alertChannelsForm.whatsapp.webhookUrl} type="text" placeholder="https://gateway.example.com/whatsapp" onChange={(event) => setAlertChannelsForm((current) => ({ ...current, whatsapp: { ...current.whatsapp, webhookUrl: event.target.value } }))} />
+              </label>
+              <label>
+                {tr(locale, 'Destinataire WhatsApp', 'WhatsApp recipient', 'مستلم WhatsApp')}
+                <input className="form-control" value={alertChannelsForm.whatsapp.recipient} type="text" placeholder="+212600000000" onChange={(event) => setAlertChannelsForm((current) => ({ ...current, whatsapp: { ...current.whatsapp, recipient: event.target.value } }))} />
+              </label>
+
+              <button className="btn primary" type="button" onClick={saveAlertChannelsSettings}>{tr(locale, 'Enregistrer canaux', 'Save channels', 'حفظ القنوات')}</button>
+              <button className="btn" type="button" onClick={testAlertChannelsSettings}>{tr(locale, 'Tester canaux', 'Test channels', 'اختبار القنوات')}</button>
+              <button className="btn" type="button" onClick={() => refreshAlertNotifications({ announce: true })}>{tr(locale, 'Rafraichir accusés', 'Refresh acknowledgments', 'تحديث التأكيدات')}</button>
+            </div>
+          </div>
+
+          <div className="table-wrap">
+            <table className="table table-sm align-middle mb-0">
+              <thead>
+                <tr>
+                  <th>{tr(locale, 'Canal', 'Channel', 'القناة')}</th>
+                  <th>{tr(locale, 'Destinataire', 'Recipient', 'المستلم')}</th>
+                  <th>{tr(locale, 'Message', 'Message', 'الرسالة')}</th>
+                  <th>{tr(locale, 'Statut', 'Status', 'الحالة')}</th>
+                  <th>{tr(locale, 'Heure', 'Time', 'الوقت')}</th>
+                  <th>{tr(locale, 'Action', 'Action', 'الإجراء')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Array.isArray(alertNotifications) && alertNotifications.length ? alertNotifications.map((entry) => (
+                  <tr key={entry.id || `${entry.channel}-${entry.createdAt}`}>
+                    <td>{escapeText((entry.channel || '-').toUpperCase())}</td>
+                    <td>{escapeText(entry.recipient || '-')}</td>
+                    <td>{escapeText(entry.message || '-')}</td>
+                    <td>{escapeText(entry.status || '-')}</td>
+                    <td>{entry.createdAt ? new Date(entry.createdAt).toLocaleString(locale) : '-'}</td>
+                    <td>
+                      {String(entry.status || '').toLowerCase() !== 'acknowledged' ? (
+                        <button className="mini-btn" type="button" onClick={() => acknowledgeAlertNotification(entry.id)}>
+                          {tr(locale, 'Accuser', 'Acknowledge', 'تأكيد')}
+                        </button>
+                      ) : (
+                        <span className="small-note">{tr(locale, 'OK', 'OK', 'تم')}</span>
+                      )}
+                    </td>
+                  </tr>
+                )) : (
+                  <tr><td colSpan="6"><div className="empty">{tr(locale, 'Aucune notification sortante.', 'No outbound notifications.', 'لا توجد إشعارات صادرة.')}</div></td></tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       ) : null}
