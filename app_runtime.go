@@ -605,7 +605,8 @@ func (a *App) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if bed.Status == statusFree || bed.Status == statusCleaning || bed.Status == statusAlert {
 		if bed.PatientID != nil {
-			a.releasePatientByID(*bed.PatientID, user.Username, false)
+			markConsulted := bed.Status == statusFree || bed.Status == statusCleaning
+			a.releasePatientByID(*bed.PatientID, user.Username, markConsulted)
 		}
 		bed.PatientID = nil
 		bed.PatientName = ""
@@ -774,6 +775,14 @@ func (a *App) handlePatients(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
+		previousTriageScore := -1
+		var existingPatient Patient
+		if err := a.db.Where("registration_number = ?", strings.TrimSpace(req.RegistrationNumber)).First(&existingPatient).Error; err == nil {
+			previousTriageScore = existingPatient.TriageScore
+		} else if err != gorm.ErrRecordNotFound {
+			http.Error(w, "patient lookup failed", http.StatusInternalServerError)
+			return
+		}
 		if req.TriageScore != nil && (*req.TriageScore < 0 || *req.TriageScore > 4) {
 			http.Error(w, "triage score must be 0..4", http.StatusBadRequest)
 			return
@@ -787,7 +796,7 @@ func (a *App) handlePatients(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if roleOf(user) == roleTriage && patient.TriageScore == 4 {
+		if req.TriageScore != nil && patient.TriageScore == 4 && previousTriageScore != 4 {
 			var linkedBed *Bed
 			if patient.BedID != nil {
 				var bed Bed
