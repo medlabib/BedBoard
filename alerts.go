@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -62,27 +64,44 @@ func buildTriageAlertPayload(patient Patient, bed *Bed, actor string) alertPaylo
 func publishUrgentAlert(a *App, payload alertPayload) {
 	a.broadcastEvent("alert.urgent", payload)
 	config := a.getGotifyConfig()
-	go sendGotifyAlertPayload(payload, config)
+	go func() {
+		if err := sendGotifyAlertPayload(payload, config); err != nil {
+			log.Printf("gotify send failed: %v", err)
+		}
+	}()
 }
 
-func sendGotifyAlertPayload(payload alertPayload, config gotifyConfig) {
+func sendGotifyAlertPayload(payload alertPayload, config gotifyConfig) error {
 	if !config.Enabled {
-		return
+		return fmt.Errorf("gotify is disabled")
 	}
 	baseURL := strings.TrimSpace(config.URL)
 	if baseURL == "" {
-		return
+		return fmt.Errorf("gotify url is empty")
 	}
 	token := strings.TrimSpace(config.Token)
+	if token == "" {
+		return fmt.Errorf("gotify token is empty")
+	}
 	priority := config.Priority
 	if priority <= 0 {
 		priority = 8
 	}
 
-	endpoint := strings.TrimRight(baseURL, "/")
-	if !strings.HasSuffix(endpoint, "/message") {
-		endpoint += "/message"
+	parsedURL, err := url.Parse(baseURL)
+	if err != nil {
+		return fmt.Errorf("gotify url parse failed: %w", err)
 	}
+	if parsedURL.Path == "" {
+		parsedURL.Path = "/message"
+	} else if !strings.HasSuffix(parsedURL.Path, "/message") {
+		parsedURL.Path = strings.TrimRight(parsedURL.Path, "/") + "/message"
+	}
+	query := parsedURL.Query()
+	if strings.TrimSpace(query.Get("token")) == "" {
+		query.Set("token", token)
+	}
+	parsedURL.RawQuery = query.Encode()
 
 	message := fmt.Sprintf("%s | Patient: %s | Chambre: %s | Lit: %s | Heure: %s | Origine: %s",
 		payload.Title,
@@ -99,28 +118,25 @@ func sendGotifyAlertPayload(payload alertPayload, config gotifyConfig) {
 		"priority": priority,
 	})
 	if err != nil {
-		log.Printf("gotify marshal failed: %v", err)
-		return
+		return fmt.Errorf("gotify marshal failed: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, parsedURL.String(), bytes.NewReader(body))
 	if err != nil {
-		log.Printf("gotify request failed: %v", err)
-		return
+		return fmt.Errorf("gotify request failed: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if token != "" {
-		req.Header.Set("X-Gotify-Key", token)
-	}
+	req.Header.Set("X-Gotify-Key", token)
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: 8 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("gotify call failed: %v", err)
-		return
+		return fmt.Errorf("gotify call failed: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		log.Printf("gotify returned status %d", resp.StatusCode)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return fmt.Errorf("gotify returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
+	return nil
 }

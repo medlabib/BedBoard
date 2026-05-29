@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -41,14 +40,20 @@ func (a *App) bootstrapData() error {
 		return err
 	}
 	if adminCount == 0 {
-		username := strings.TrimSpace(os.Getenv("ADMIN_INIT_USERNAME"))
+		username := strings.TrimSpace(a.getSettingValue(settingAdminInitUsername))
+		if username == "" {
+			username = strings.TrimSpace(os.Getenv("ADMIN_INIT_USERNAME"))
+		}
 		if username == "" {
 			username = defaultUsername
 		}
-		password := strings.TrimSpace(os.Getenv("ADMIN_INIT_PASSWORD"))
+		password := strings.TrimSpace(a.getSettingValue(settingAdminInitPassword))
+		if password == "" {
+			password = strings.TrimSpace(os.Getenv("ADMIN_INIT_PASSWORD"))
+		}
 		if password == "" {
 			password = insecureDefaultBootstrapPassword
-			log.Printf("WARNING: ADMIN_INIT_PASSWORD not set. Using insecure default bootstrap password. Change immediately after first login.")
+			log.Printf("WARNING: security.admin_init_password not set. Using insecure default bootstrap password. Change immediately after first login.")
 		}
 		hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		if err != nil {
@@ -245,7 +250,7 @@ func (a *App) handleAuth(w http.ResponseWriter, r *http.Request) {
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   shouldUseSecureCookie(r),
+		Secure:   a.shouldUseSecureCookie(r),
 		SameSite: http.SameSiteStrictMode,
 		Expires:  session.ExpiresAt,
 		MaxAge:   int(sessionDuration.Seconds()),
@@ -253,14 +258,14 @@ func (a *App) handleAuth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "authenticated": true, "username": user.Username, "admin": isAdminLike(user), "role": roleOf(user)})
 }
 
-func shouldUseSecureCookie(r *http.Request) bool {
+func (a *App) shouldUseSecureCookie(r *http.Request) bool {
 	if r != nil && r.TLS != nil {
 		return true
 	}
-	if envBool("FORCE_SECURE_COOKIE", false) {
+	if a.getSettingBool(settingForceSecureCookie, envBool("FORCE_SECURE_COOKIE", false)) {
 		return true
 	}
-	if !envBool("TRUST_PROXY_HEADERS", false) || r == nil {
+	if !a.getSettingBool(settingTrustProxyHeaders, envBool("TRUST_PROXY_HEADERS", false)) || r == nil {
 		return false
 	}
 	xfp := strings.TrimSpace(strings.ToLower(r.Header.Get("X-Forwarded-Proto")))
@@ -760,6 +765,10 @@ func (a *App) handlePatients(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "registration number required", http.StatusBadRequest)
 			return
 		}
+		if strings.TrimSpace(req.PatientType) != "" && normalizePatientType(req.PatientType) == "" {
+			http.Error(w, "patient type must be one of: traumato, medical, douleurs thoracique, chirurgical", http.StatusBadRequest)
+			return
+		}
 		user, _ := a.currentUser(r)
 		if !canManagePatients(user) {
 			http.Error(w, "forbidden", http.StatusForbidden)
@@ -778,7 +787,7 @@ func (a *App) handlePatients(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if patient.TriageScore == 4 {
+		if roleOf(user) == roleTriage && patient.TriageScore == 4 {
 			var linkedBed *Bed
 			if patient.BedID != nil {
 				var bed Bed
@@ -864,12 +873,20 @@ func (a *App) upsertAndAssignPatient(req patientRequest, actor string) (Patient,
 	}
 	trimmedReg := strings.TrimSpace(req.RegistrationNumber)
 	trimmedName := strings.TrimSpace(req.Name)
+	normalizedPatientType := ""
+	if strings.TrimSpace(req.PatientType) != "" {
+		normalizedPatientType = normalizePatientType(req.PatientType)
+		if normalizedPatientType == "" {
+			return Patient{}, fmt.Errorf("invalid patient type")
+		}
+	}
 	isNew := false
 	var patient Patient
-	if err := a.db.Where("registration_number = ?", trimmedReg).First(&patient).Error; err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return Patient{}, err
-		}
+	result := a.db.Where("registration_number = ?", trimmedReg).Limit(1).Find(&patient)
+	if result.Error != nil {
+		return Patient{}, result.Error
+	}
+	if result.RowsAffected == 0 {
 		isNew = true
 		patient = Patient{RegistrationNumber: trimmedReg}
 	}
@@ -878,6 +895,15 @@ func (a *App) upsertAndAssignPatient(req patientRequest, actor string) (Patient,
 	}
 	if trimmedName != "" {
 		patient.Name = trimmedName
+	}
+	if normalizedPatientType != "" {
+		patient.PatientType = normalizedPatientType
+	}
+	if patient.PatientType == "" {
+		if isNew {
+			return Patient{}, fmt.Errorf("patient type required")
+		}
+		patient.PatientType = patientTypeMedical
 	}
 	if req.TriageScore != nil {
 		patient.TriageScore = *req.TriageScore

@@ -87,6 +87,49 @@ button {
   padding: 20px 0 36px;
 }
 
+.login-shell {
+  width: min(880px, calc(100% - 24px));
+  min-height: 100vh;
+  display: grid;
+  align-content: center;
+  gap: 14px;
+}
+
+.login-card {
+  padding: 28px;
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 20px;
+  align-items: center;
+}
+
+.login-brand {
+  display: grid;
+  gap: 12px;
+}
+
+.login-brand-mark {
+  width: 76px;
+  height: 76px;
+  border-radius: 20px;
+}
+
+.login-title {
+  margin: 0;
+  font-size: clamp(2rem, 3.5vw, 3.4rem);
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+
+.login-form {
+  display: grid;
+  gap: 10px;
+}
+
+.login-state {
+  margin: 4px 0 0;
+}
+
 .patient-page-shell {
   width: min(1600px, calc(100% - 20px));
 }
@@ -191,6 +234,23 @@ button {
   gap: 10px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+[dir="rtl"] .nav-left,
+[dir="rtl"] .nav-actions,
+[dir="rtl"] .modal-actions,
+[dir="rtl"] .patient-actions,
+[dir="rtl"] .status-row,
+[dir="rtl"] .patient-priority-row {
+  direction: rtl;
+}
+
+[dir="rtl"] th,
+[dir="rtl"] td,
+[dir="rtl"] .small-note,
+[dir="rtl"] label,
+[dir="rtl"] .patient-line {
+  text-align: right;
 }
 
 .user-chip {
@@ -539,6 +599,37 @@ select:focus-visible,
 
 .form-grid.compact {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-admin-card {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-focus-card {
+  border: 1px solid rgba(127, 167, 212, 0.34);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(247, 250, 253, 0.86));
+}
+
+.settings-focus-card h2 {
+  margin: 0;
+}
+
+.settings-focus-card .form-grid {
+  margin-top: 6px;
+}
+
+.settings-admin-card h2 {
+  margin: 0;
+}
+
+.admin-form-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: end;
+}
+
+.admin-form-grid .btn {
+  min-height: 46px;
 }
 
 label {
@@ -918,7 +1009,9 @@ tr:last-child td { border-bottom: none; }
 
   .form-grid,
   .patient-command-grid,
-  .modal-grid {
+  .admin-form-grid,
+  .modal-grid,
+  .login-card {
     grid-template-columns: 1fr;
   }
 

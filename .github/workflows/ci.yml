@@ -36,15 +36,6 @@ jobs:
       - name: Security health gate
         env:
           PORT: "18080"
-          ADMIN_INIT_USERNAME: "admin"
-          ADMIN_INIT_PASSWORD: "CI_Admin!234"
-          FORCE_SECURE_COOKIE: "true"
-          TRUST_PROXY_HEADERS: "true"
-          ENABLE_HSTS: "true"
-          HSTS_MAX_AGE: "31536000"
-          HSTS_INCLUDE_SUBDOMAINS: "true"
-          HSTS_PRELOAD: "false"
-          GOTIFY_TOKEN_ENC_KEY: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
         run: |
           set -euo pipefail
           go run . > /tmp/bedboard-security.log 2>&1 &
@@ -56,7 +47,7 @@ jobs:
           LOGIN_CODE="$(curl --silent --show-error --output /tmp/bedboard-login.json --write-out "%{http_code}" \
             --cookie-jar /tmp/bedboard-cookie.txt \
             --header "Content-Type: application/json" \
-            --data '{"username":"admin","password":"CI_Admin!234"}' \
+            --data '{"username":"admin","password":"ChangeMe!123"}' \
             "http://127.0.0.1:${PORT}/api/auth")"
           if [[ "$LOGIN_CODE" != "200" ]]; then
             cat /tmp/bedboard-login.json

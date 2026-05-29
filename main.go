@@ -21,6 +21,7 @@ var embeddedFiles embed.FS
 
 const (
 	defaultPort                      = ":8080"
+	defaultDataDirName               = "BedBoard"
 	defaultDBFileBaseName            = "bedboard.db"
 	defaultBackupDirBaseName         = "backups"
 	insecureDefaultBootstrapPassword = "ChangeMe!123"
@@ -38,6 +39,10 @@ const (
 	roleReception                    = "reception"
 	roleTriage                       = "triage"
 	roleDechocage                    = "dechocage"
+	patientTypeTraumato              = "traumato"
+	patientTypeMedical               = "medical"
+	patientTypeChestPain             = "douleurs_thoracique"
+	patientTypeSurgical              = "chirurgical"
 )
 
 var (
@@ -52,32 +57,90 @@ func resolveDataPaths() error {
 	}
 
 	baseDir := strings.TrimSpace(os.Getenv("BEDBOARD_DATA_DIR"))
-	if baseDir == "" {
-		if runtime.GOOS == "windows" {
-			configDir, err := os.UserConfigDir()
-			if err != nil {
-				homeDir, homeErr := os.UserHomeDir()
-				if homeErr != nil {
-					return err
-				}
-				configDir = filepath.Join(homeDir, "AppData", "Roaming")
-			}
-			baseDir = filepath.Join(configDir, "BedBoard")
-		} else {
-			baseDir = "."
+	if baseDir != "" {
+		return useDataDir(baseDir)
+	}
+
+	candidates := make([]string, 0, 6)
+	if runtime.GOOS == "windows" {
+		if localAppData := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); localAppData != "" {
+			candidates = append(candidates, filepath.Join(localAppData, defaultDataDirName))
+		}
+		if configDir, err := os.UserConfigDir(); err == nil && strings.TrimSpace(configDir) != "" {
+			candidates = append(candidates, filepath.Join(configDir, defaultDataDirName))
+		}
+		if appData := strings.TrimSpace(os.Getenv("APPDATA")); appData != "" {
+			candidates = append(candidates, filepath.Join(appData, defaultDataDirName))
 		}
 	}
 
-	if err := os.MkdirAll(baseDir, 0o700); err != nil {
+	if wd, err := os.Getwd(); err == nil && strings.TrimSpace(wd) != "" {
+		candidates = append(candidates, filepath.Join(wd, defaultDataDirName))
+	}
+	if exePath, err := os.Executable(); err == nil && strings.TrimSpace(exePath) != "" {
+		exeDir := filepath.Dir(exePath)
+		candidates = append(candidates, filepath.Join(exeDir, defaultDataDirName))
+	}
+	candidates = append(candidates, filepath.Join(os.TempDir(), defaultDataDirName))
+
+	var lastErr error
+	for _, candidate := range candidates {
+		if strings.TrimSpace(candidate) == "" {
+			continue
+		}
+		if err := useDataDir(candidate); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+	}
+
+	if lastErr != nil {
+		return lastErr
+	}
+	return errors.New("unable to resolve writable data directory")
+}
+
+func useDataDir(baseDir string) error {
+	cleanBaseDir := filepath.Clean(baseDir)
+	if err := os.MkdirAll(cleanBaseDir, 0o700); err != nil {
 		return err
 	}
-	if err := ensurePrivateDirPermissions(baseDir); err != nil {
+	if err := ensurePrivateDirPermissions(cleanBaseDir); err != nil {
+		return err
+	}
+	if err := ensureDirWritable(cleanBaseDir); err != nil {
 		return err
 	}
 
-	dataDirPath = baseDir
-	dbFileName = filepath.Join(baseDir, defaultDBFileBaseName)
-	backupDirName = filepath.Join(baseDir, defaultBackupDirBaseName)
+	backupDir := filepath.Join(cleanBaseDir, defaultBackupDirBaseName)
+	if err := os.MkdirAll(backupDir, 0o700); err != nil {
+		return err
+	}
+	if err := ensurePrivateDirPermissions(backupDir); err != nil {
+		return err
+	}
+
+	dataDirPath = cleanBaseDir
+	dbFileName = filepath.Join(cleanBaseDir, defaultDBFileBaseName)
+	backupDirName = backupDir
+	return nil
+}
+
+func ensureDirWritable(path string) error {
+	testFile := filepath.Join(path, ".bedboard_write_test")
+	f, err := os.OpenFile(testFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString("ok"); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	_ = os.Remove(testFile)
 	return nil
 }
 
@@ -101,6 +164,7 @@ type Patient struct {
 	ID                 uint       `gorm:"primaryKey" json:"-"`
 	RegistrationNumber string     `gorm:"uniqueIndex;not null" json:"registrationNumber"`
 	Name               string     `json:"name"`
+	PatientType        string     `gorm:"index;not null;default:medical" json:"patientType"`
 	TriageScore        int        `json:"triageScore"`
 	BedID              *uint      `json:"-"`
 	Status             string     `json:"status"`
@@ -223,6 +287,7 @@ type bedRequest struct {
 type patientRequest struct {
 	RegistrationNumber string `json:"registrationNumber"`
 	Name               string `json:"name"`
+	PatientType        string `json:"patientType"`
 	BedNumber          int    `json:"bedNumber"`
 	BedID              int    `json:"bedId"`
 	TriageScore        *int   `json:"triageScore"`
@@ -255,6 +320,7 @@ type bedView struct {
 type patientView struct {
 	RegistrationNumber string     `json:"registrationNumber"`
 	Name               string     `json:"name"`
+	PatientType        string     `json:"patientType"`
 	TriageScore        int        `json:"triageScore"`
 	BedNumber          *int       `json:"bedNumber"`
 	RoomName           string     `json:"roomName"`
@@ -320,15 +386,19 @@ func main() {
 	mux.HandleFunc("/api/me", app.withCORS(app.withDBRead(app.handleMe)))
 	mux.HandleFunc("/api/auth", app.withCORS(app.withDBWrite(app.handleAuth)))
 	mux.HandleFunc("/api/logout", app.withCORS(app.withDBWrite(app.handleLogout)))
+	mux.HandleFunc("/api/public/ui-config", app.withCORS(app.withDBRead(app.handlePublicUIConfig)))
 	mux.HandleFunc("/api/state", app.withCORS(app.requireAuthDB(app.withDBRead(app.handleState))))
 	mux.HandleFunc("/api/stream", app.withCORS(app.requireAuthDB(app.handleStream)))
 	mux.HandleFunc("/api/users", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handleUsers)))))
 	mux.HandleFunc("/api/users/password", app.withCORS(app.requireAuthDB(app.withDBWrite(app.handleUserPassword))))
 	mux.HandleFunc("/api/audit", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBRead(app.handleAudit)))))
+	mux.HandleFunc("/api/admin/ui/config", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handleUIConfig)))))
 	mux.HandleFunc("/api/admin/security/health", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBRead(app.handleSecurityHealth)))))
+	mux.HandleFunc("/api/admin/security/config", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handleSecurityConfig)))))
 	mux.HandleFunc("/api/admin/backup", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handleBackup)))))
 	mux.HandleFunc("/api/admin/restore", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handleRestore)))))
 	mux.HandleFunc("/api/admin/integrations/gotify", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handleGotifySettings)))))
+	mux.HandleFunc("/api/admin/integrations/gotify/test", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handleGotifyTest)))))
 	mux.HandleFunc("/api/status", app.withCORS(app.requireAuthDB(app.withDBWrite(app.handleStatus))))
 	mux.HandleFunc("/api/config-bed", app.withCORS(app.requireAuthDB(app.withDBWrite(app.handleConfigBed))))
 	mux.HandleFunc("/api/beds", app.withCORS(app.requireAuthDB(app.withDBWrite(app.handleBedsCreate))))

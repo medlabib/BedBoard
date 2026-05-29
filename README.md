@@ -7,20 +7,27 @@
 <p align="center">
   <img alt="Local Deployment" src="https://img.shields.io/badge/Local%20Deployment-Ready-B5C7A4" />
   <img alt="Realtime" src="https://img.shields.io/badge/Realtime-Beds%20and%20Patients-A6B8C7" />
-  <img alt="Security" src="https://img.shields.io/badge/Security-Hardened%20by%20Env-E2DACD" />
+  <img alt="Security" src="https://img.shields.io/badge/Security-In%20App%20Controls-E2DACD" />
 </p>
 
-BedBoard is a local-first emergency-unit board for bed occupancy and patient flow.
+BedBoard is a local-first emergency board for bed occupancy and patient flow, with role-based access, realtime sync, and admin-managed security/UI settings.
 
-## Features
+## Highlights
 
-- Realtime updates via server events.
-- Bed state management: free, occupied, cleaning, alert.
-- Patient lifecycle: registration, assignment, consulted, archived.
-- Role-based access: admin, user, triage, reception, dechocage.
-- Audit trail for critical bed operations.
-- Admin backup and restore for SQLite.
-- Security health endpoint for quick posture checks.
+- Login-first UX: unauthenticated users only see the sign-in page (no sign-up).
+- Realtime synchronization via SSE (`/api/stream`).
+- Bed status management: free, occupied, cleaning, alert.
+- Patient lifecycle: register, assign, consult/archive.
+- Roles: `admin`, `user`, `triage`, `reception`, `dechocage`.
+- Admin operations: users, backups, restore, security health, integrations.
+- White-label + locale controlled by admin (French, English, Arabic).
+- Gotify integration with secure token storage and built-in test action.
+
+## Tech Stack
+
+- Backend: Go, GORM, SQLite
+- Frontend: React + Vite
+- Transport: REST + Server-Sent Events
 
 ## Quick Start
 
@@ -30,114 +37,172 @@ npm --prefix frontend run build
 go run .
 ```
 
-Default app URL: `http://localhost:8080`
+Default URL: `http://localhost:8080`
 
-## WARNING: Default Password and Generated Environment
+## First Login
 
-This section provides an **insecure bootstrap** for quick local validation only.
+On a fresh database:
 
-- Default bootstrap username: `admin`
-- Default bootstrap password: `ChangeMe!123`
-- You must rotate this password immediately after first login.
-- Never use this insecure default profile in production.
+- Username: `admin`
+- Password: `ChangeMe!123`
 
-### Linux/macOS: generate default env quickly
+Change it immediately.
 
-```bash
-cat > .env.default.generated <<'EOF'
-ADMIN_INIT_USERNAME=admin
-ADMIN_INIT_PASSWORD=ChangeMe!123
-FORCE_SECURE_COOKIE=true
-TRUST_PROXY_HEADERS=true
-ENABLE_HSTS=true
-HSTS_MAX_AGE=31536000
-HSTS_INCLUDE_SUBDOMAINS=true
-HSTS_PRELOAD=false
-GOTIFY_TOKEN_ENC_KEY=$(openssl rand -base64 32)
-EOF
+## Admin Settings Structure
 
-set -a
-source .env.default.generated
-set +a
+Settings UI is split into sections for better UX:
 
-go run .
-```
+- Parameters
+  - App name, app logo, interface language
+  - User creation and password reset
+- Security
+  - Bootstrap admin credentials
+  - Cookie/HSTS/proxy controls
+  - Security health checks
+- Integrations
+  - Gotify URL/token/priority
+  - Send test notification button
+- Operations
+  - One-click backup and restore
+  - Audit logs
 
-### Windows PowerShell: generate default env quickly
+## Branding and Localization
 
-```powershell
-$bytes = New-Object byte[] 32
-[System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
-$gotifyKey = [Convert]::ToBase64String($bytes)
+Branding and locale are persisted in app settings and applied globally:
 
-@"
-ADMIN_INIT_USERNAME=admin
-ADMIN_INIT_PASSWORD=ChangeMe!123
-FORCE_SECURE_COOKIE=true
-TRUST_PROXY_HEADERS=true
-ENABLE_HSTS=true
-HSTS_MAX_AGE=31536000
-HSTS_INCLUDE_SUBDOMAINS=true
-HSTS_PRELOAD=false
-GOTIFY_TOKEN_ENC_KEY=$gotifyKey
-"@ | Set-Content .env.default.generated
+- Login page
+- Main dashboard
+- Reception page
+- Patient display page
 
-Get-Content .env.default.generated | ForEach-Object {
-  if ($_ -match '^(.*?)=(.*)$') {
-    [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process')
-  }
-}
+Supported locales:
 
-go run .
-```
+- `fr`
+- `en`
+- `ar`
 
-## Mandatory Hardening Before Production
+Endpoints:
 
-1. Replace `ADMIN_INIT_PASSWORD` with a strong unique secret.
-2. Run behind HTTPS and keep `FORCE_SECURE_COOKIE=true`.
-3. Keep `ENABLE_HSTS=true` only when HTTPS is active end-to-end.
-4. Use a real persistent `GOTIFY_TOKEN_ENC_KEY` and keep it secret.
-5. Restrict network exposure (private subnet, VPN, or reverse-proxy ACL).
+- `GET /api/public/ui-config`
+- `GET /api/admin/ui/config`
+- `POST /api/admin/ui/config`
 
-## Security Environment Variables
+## Security Configuration (In-App)
 
-- `ADMIN_INIT_USERNAME`: bootstrap admin username (default `admin`).
-- `ADMIN_INIT_PASSWORD`: bootstrap admin password (required if no admin exists).
-- `FORCE_SECURE_COOKIE`: force `Secure` cookie flag.
-- `TRUST_PROXY_HEADERS`: trust `X-Forwarded-Proto=https` for secure cookies.
-- `ENABLE_HSTS`: enable `Strict-Transport-Security` header.
-- `HSTS_MAX_AGE`: HSTS max age in seconds.
-- `HSTS_INCLUDE_SUBDOMAINS`: add `includeSubDomains` token to HSTS.
-- `HSTS_PRELOAD`: add `preload` token to HSTS.
-- `GOTIFY_TOKEN_ENC_KEY`: base64 key used to encrypt Gotify token at rest.
+Admin-configurable security keys:
 
-## Security Health Endpoint (Admin)
+- `security.admin_init_username`
+- `security.admin_init_password`
+- `security.force_secure_cookie`
+- `security.trust_proxy_headers`
+- `security.enable_hsts`
+- `security.hsts_max_age`
+- `security.hsts_include_subdomains`
+- `security.hsts_preload`
+- `security.gotify_token_enc_key`
+
+Notes:
+
+- Values are persisted in SQLite app settings.
+- Environment variables are fallback sources when app settings are unset.
+- For production, configure in-app values before exposure.
+
+## Gotify Integration
+
+Admin endpoints:
+
+- `GET /api/admin/integrations/gotify`
+- `POST /api/admin/integrations/gotify`
+- `POST /api/admin/integrations/gotify/test`
+
+Behavior:
+
+- URL must be valid `http` or `https`.
+- Enabling requires a usable token.
+- Token is stored encrypted at rest when encryption key is configured.
+- Test endpoint returns explicit errors for bad URL/token/response.
+
+## Security Health Endpoint
 
 - `GET /api/admin/security/health`
 
 Returns:
 
-- global status: `pass`, `warn`, or `fail`
-- detailed checks and recommendations
+- Global status (`pass`, `warn`, `fail`)
+- Per-check details and recommendations
 
-Use this endpoint in CI/CD gates and admin verification flows.
+## Local Build and Release
 
-## Build and Release
+Validation:
 
-- CI workflow: `.github/workflows/ci.yml`
-- Signed release workflow: `.github/workflows/release-signed.yml`
-- Release tags format: `v*` (example: `v2.2.0`)
+```bash
+npm --prefix frontend run build
+go build ./...
+```
 
-## Local Test Matrix
+Local release artifacts:
 
-1. Login with bootstrap account.
-2. Create one patient, assign one bed, set alert status.
-3. Verify audit logs update.
-4. Trigger backup and restore.
-5. Validate security health endpoint returns expected controls.
+```bash
+set +u
+npm --prefix frontend run build
+mkdir -p release
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags='-s -w' -o release/BedBoard_windows_amd64.exe .
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags='-s -w' -o release/BedBoard_linux_amd64 .
+rm -f release/BedBoard_windows_amd64.zip release/BedBoard_linux_amd64.tar.gz release/checksums.txt
+zip -j release/BedBoard_windows_amd64.zip release/BedBoard_windows_amd64.exe
+tar -czf release/BedBoard_linux_amd64.tar.gz -C release BedBoard_linux_amd64
+sha256sum release/BedBoard_windows_amd64.exe release/BedBoard_windows_amd64.zip release/BedBoard_linux_amd64 release/BedBoard_linux_amd64.tar.gz > release/checksums.txt
+```
 
-## Support Notes
+Generated files:
 
-- For local testing speed, `.env.default.generated` is acceptable.
-- For any shared or production environment, remove insecure defaults immediately.
-- Keep README warnings visible for operators and reviewers.
+- `release/BedBoard_windows_amd64.exe`
+- `release/BedBoard_windows_amd64.zip`
+- `release/BedBoard_linux_amd64`
+- `release/BedBoard_linux_amd64.tar.gz`
+- `release/checksums.txt`
+
+## GitHub Release
+
+The repository includes a tag-driven GitHub Actions workflow in `.github/workflows/release-signed.yml`.
+
+How it works:
+
+- Push a tag matching `v*`.
+- The workflow builds the frontend and backend.
+- A security health gate runs before packaging.
+- Release artifacts are signed with Sigstore Cosign keyless signing.
+- GitHub Release assets are published automatically with checksums and signature material.
+
+Typical commands:
+
+```bash
+git add .
+git commit -m "release: prepare next version"
+git push origin main
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+Published release assets include:
+
+- binaries and archives
+- `checksums.txt`
+- `.sig` signatures
+- `.pem` certificates emitted by Cosign
+
+## Operational Checklist
+
+1. Login as admin and rotate admin password.
+2. Configure branding and locale.
+3. Configure security settings and check health endpoint.
+4. Configure Gotify and run test notification.
+5. Create role accounts and validate permissions.
+6. Validate backups and restore on a test copy.
+7. Run local release and verify checksums.
+
+## Notes
+
+- Project is local-first; protect exposure with network controls.
+- Prefer HTTPS reverse proxy in production.
+- Rotate bootstrap/admin credentials and encryption keys regularly.

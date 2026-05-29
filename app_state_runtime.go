@@ -88,9 +88,14 @@ func (a *App) collectState(r *http.Request) (statePayload, error) {
 	var totalConsultMinutes float64
 	var consultCount int
 	for _, patient := range patients {
-		view := patientView{RegistrationNumber: patient.RegistrationNumber, Name: patient.Name, TriageScore: patient.TriageScore, Status: patient.Status, AssignedAt: patient.AssignedAt}
+		patientType := normalizePatientType(patient.PatientType)
+		if patientType == "" {
+			patientType = patientTypeMedical
+		}
+		view := patientView{RegistrationNumber: patient.RegistrationNumber, Name: patient.Name, PatientType: patientType, TriageScore: patient.TriageScore, Status: patient.Status, AssignedAt: patient.AssignedAt}
 		if receptionRestricted {
 			view.Name = ""
+			view.PatientType = ""
 			view.TriageScore = 0
 		}
 		if patient.BedID != nil {
@@ -400,7 +405,8 @@ func (a *App) currentUser(r *http.Request) (AdminUser, bool) {
 		return AdminUser{}, false
 	}
 	var session Session
-	if err := a.db.Where("token = ? AND expires_at > ?", cookie.Value, time.Now()).First(&session).Error; err != nil {
+	result := a.db.Where("token = ? AND expires_at > ?", cookie.Value, time.Now()).Limit(1).Find(&session)
+	if result.Error != nil || result.RowsAffected == 0 {
 		return AdminUser{}, false
 	}
 	var user AdminUser
@@ -444,6 +450,21 @@ func normalizeType(value string) string {
 		return thoracicBedType
 	default:
 		return defaultBedType
+	}
+}
+
+func normalizePatientType(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case patientTypeTraumato, "trauma":
+		return patientTypeTraumato
+	case patientTypeMedical, "med":
+		return patientTypeMedical
+	case patientTypeChestPain, "douleurs thoracique", "douleur thoracique", "thoracic_pain", "chest_pain":
+		return patientTypeChestPain
+	case patientTypeSurgical, "surgical":
+		return patientTypeSurgical
+	default:
+		return ""
 	}
 }
 
@@ -505,13 +526,14 @@ func (a *App) withSecurityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self';")
-		if envBool("ENABLE_HSTS", false) {
-			maxAge := envInt("HSTS_MAX_AGE", 31536000)
+		enableHSTS := a.getSettingBool(settingEnableHSTS, envBool("ENABLE_HSTS", false))
+		if enableHSTS {
+			maxAge := a.getSettingInt(settingHSTSMaxAge, envInt("HSTS_MAX_AGE", 31536000))
 			hstsValue := fmt.Sprintf("max-age=%d", maxAge)
-			if envBool("HSTS_INCLUDE_SUBDOMAINS", true) {
+			if a.getSettingBool(settingHSTSIncludeSubdomains, envBool("HSTS_INCLUDE_SUBDOMAINS", true)) {
 				hstsValue += "; includeSubDomains"
 			}
-			if envBool("HSTS_PRELOAD", false) {
+			if a.getSettingBool(settingHSTSPreload, envBool("HSTS_PRELOAD", false)) {
 				hstsValue += "; preload"
 			}
 			w.Header().Set("Strict-Transport-Security", hstsValue)

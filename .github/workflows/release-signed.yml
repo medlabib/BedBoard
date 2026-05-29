@@ -1,4 +1,4 @@
-name: Release Signed (Optional)
+name: Release
 
 on:
   push:
@@ -10,14 +10,8 @@ permissions:
   id-token: write
 
 jobs:
-  build-sign-release:
+  build-release:
     runs-on: ubuntu-latest
-    env:
-      WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
-      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
-      TIMESTAMP_URL: ${{ secrets.TIMESTAMP_URL }}
-      SIGNING_SUBJECT: ${{ secrets.SIGNING_SUBJECT }}
-      REQUIRE_WINDOWS_AUTHENTICODE: "true"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,15 +38,6 @@ jobs:
       - name: Security health gate (release)
         env:
           PORT: "18080"
-          ADMIN_INIT_USERNAME: "admin"
-          ADMIN_INIT_PASSWORD: "Release_Admin!234"
-          FORCE_SECURE_COOKIE: "true"
-          TRUST_PROXY_HEADERS: "true"
-          ENABLE_HSTS: "true"
-          HSTS_MAX_AGE: "31536000"
-          HSTS_INCLUDE_SUBDOMAINS: "true"
-          HSTS_PRELOAD: "false"
-          GOTIFY_TOKEN_ENC_KEY: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
         run: |
           set -euo pipefail
           go run . > /tmp/bedboard-security.log 2>&1 &
@@ -64,7 +49,7 @@ jobs:
           LOGIN_CODE="$(curl --silent --show-error --output /tmp/bedboard-login.json --write-out "%{http_code}" \
             --cookie-jar /tmp/bedboard-cookie.txt \
             --header "Content-Type: application/json" \
-            --data '{"username":"admin","password":"Release_Admin!234"}' \
+            --data '{"username":"admin","password":"ChangeMe!123"}' \
             "http://127.0.0.1:${PORT}/api/auth")"
           if [[ "$LOGIN_CODE" != "200" ]]; then
             cat /tmp/bedboard-login.json
@@ -92,28 +77,6 @@ jobs:
         run: |
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o release/BedBoard_linux_amd64 .
           tar -czf release/BedBoard_linux_amd64.tar.gz -C release BedBoard_linux_amd64
-
-      - name: Generate self-signed cert fallback
-        if: ${{ env.WINDOWS_CERT_BASE64 == '' || env.WINDOWS_CERT_PASSWORD == '' }}
-        run: |
-          mkdir -p .signing
-          openssl req -x509 -newkey rsa:4096 -sha256 -days 825 -nodes \
-            -subj "/CN=Labib/O=Labib/C=MA" \
-            -keyout .signing/labib.key \
-            -out .signing/labib.crt
-          PASS="$(openssl rand -hex 24)"
-          openssl pkcs12 -export -out .signing/labib.pfx -inkey .signing/labib.key -in .signing/labib.crt -passout pass:"$PASS"
-          echo "WINDOWS_CERT_BASE64=$(base64 -w 0 .signing/labib.pfx)" >> "$GITHUB_ENV"
-          echo "WINDOWS_CERT_PASSWORD=$PASS" >> "$GITHUB_ENV"
-          if [[ -z "${SIGNING_SUBJECT:-}" ]]; then
-            echo "SIGNING_SUBJECT=Labib" >> "$GITHUB_ENV"
-          fi
-
-      - name: Install signing tool
-        run: sudo apt-get update && sudo apt-get install -y osslsigncode
-
-      - name: Sign executable (required)
-        run: bash scripts/sign-windows.sh release/BedBoard_windows_amd64.exe
 
       - name: Package ZIP
         run: |

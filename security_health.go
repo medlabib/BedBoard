@@ -28,7 +28,7 @@ func (a *App) handleSecurityHealth(w http.ResponseWriter, r *http.Request) {
 	checks := []securityCheck{}
 
 	// HSTS audit
-	if envBool("ENABLE_HSTS", false) {
+	if a.getSettingBool(settingEnableHSTS, envBool("ENABLE_HSTS", false)) {
 		checks = append(checks, securityCheck{
 			Name:    "hsts",
 			Status:  "pass",
@@ -44,13 +44,13 @@ func (a *App) handleSecurityHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Secure cookie audit
-	if envBool("FORCE_SECURE_COOKIE", false) {
+	if a.getSettingBool(settingForceSecureCookie, envBool("FORCE_SECURE_COOKIE", false)) {
 		checks = append(checks, securityCheck{
 			Name:    "secure_cookie",
 			Status:  "pass",
 			Details: "FORCE_SECURE_COOKIE is enabled.",
 		})
-	} else if envBool("TRUST_PROXY_HEADERS", false) {
+	} else if a.getSettingBool(settingTrustProxyHeaders, envBool("TRUST_PROXY_HEADERS", false)) {
 		checks = append(checks, securityCheck{
 			Name:    "secure_cookie",
 			Status:  "pass",
@@ -68,12 +68,16 @@ func (a *App) handleSecurityHealth(w http.ResponseWriter, r *http.Request) {
 	// Bootstrap admin credential policy audit
 	var adminCount int64
 	if err := a.db.Model(&AdminUser{}).Count(&adminCount).Error; err == nil {
-		if adminCount == 0 && strings.TrimSpace(os.Getenv("ADMIN_INIT_PASSWORD")) == "" {
+		bootstrapPassword := strings.TrimSpace(a.getSettingValue(settingAdminInitPassword))
+		if bootstrapPassword == "" {
+			bootstrapPassword = strings.TrimSpace(os.Getenv("ADMIN_INIT_PASSWORD"))
+		}
+		if adminCount == 0 && bootstrapPassword == "" {
 			checks = append(checks, securityCheck{
 				Name:           "admin_bootstrap",
 				Status:         "fail",
-				Details:        "No admin exists and ADMIN_INIT_PASSWORD is empty.",
-				Recommendation: "Set ADMIN_INIT_PASSWORD before first startup.",
+				Details:        "No admin exists and admin bootstrap password is empty.",
+				Recommendation: "Set admin bootstrap password in Admin > Security.",
 			})
 		} else {
 			checks = append(checks, securityCheck{
@@ -93,12 +97,16 @@ func (a *App) handleSecurityHealth(w http.ResponseWriter, r *http.Request) {
 			Details: "No Gotify token is currently stored.",
 		})
 	} else if strings.HasPrefix(rawToken, encryptedSecretPrefix) {
-		if strings.TrimSpace(os.Getenv("GOTIFY_TOKEN_ENC_KEY")) == "" {
+		key := strings.TrimSpace(a.getSettingValue(settingGotifyTokenEncKey))
+		if key == "" {
+			key = strings.TrimSpace(os.Getenv("GOTIFY_TOKEN_ENC_KEY"))
+		}
+		if key == "" {
 			checks = append(checks, securityCheck{
 				Name:           "gotify_token_encryption",
 				Status:         "fail",
-				Details:        "Encrypted token exists but GOTIFY_TOKEN_ENC_KEY is missing.",
-				Recommendation: "Provide GOTIFY_TOKEN_ENC_KEY to decrypt token at runtime.",
+				Details:        "Encrypted token exists but Gotify encryption key is missing.",
+				Recommendation: "Set Gotify encryption key in Admin > Security.",
 			})
 		} else {
 			checks = append(checks, securityCheck{
@@ -112,7 +120,7 @@ func (a *App) handleSecurityHealth(w http.ResponseWriter, r *http.Request) {
 			Name:           "gotify_token_encryption",
 			Status:         "warn",
 			Details:        "Gotify token is stored in plaintext.",
-			Recommendation: "Set GOTIFY_TOKEN_ENC_KEY and re-save token in admin settings.",
+			Recommendation: "Set Gotify encryption key in Admin > Security and re-save token.",
 		})
 	}
 

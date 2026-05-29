@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { callLanguageOptions, getCallTemplate } from './lib/call';
 import { normalizeRole } from './lib/roles';
 import { triageLevelOf, triageMeta } from './lib/triage';
 import AccountScreen from './components/AccountScreen';
@@ -10,6 +9,7 @@ import ReceptionPage from './components/ReceptionPage';
 import SettingsScreen from './components/SettingsScreen';
 import SimpleModal from './components/SimpleModal';
 import StatsScreen from './components/StatsScreen';
+import { isRtlLocale, normalizeLocale, patientTypeLabel, roleLabel, tr } from './lib/i18n';
 
 const initialStats = {
   totalBeds: 0,
@@ -26,11 +26,15 @@ const initialStats = {
 };
 
 const statusMeta = {
-  libre: { label: 'Libre', color: '#7ab893', soft: 'rgba(122, 184, 147, 0.16)' },
-  occupé: { label: 'Occupé', color: '#7fa7d4', soft: 'rgba(127, 167, 212, 0.16)' },
-  nettoyage: { label: 'Nettoyage', color: '#a58ac9', soft: 'rgba(165, 138, 201, 0.18)' },
-  alerte: { label: 'Alerte', color: '#d97a70', soft: 'rgba(217, 122, 112, 0.18)' },
+  libre: { color: '#7ab893', soft: 'rgba(122, 184, 147, 0.16)' },
+  occupé: { color: '#7fa7d4', soft: 'rgba(127, 167, 212, 0.16)' },
+  nettoyage: { color: '#a58ac9', soft: 'rgba(165, 138, 201, 0.18)' },
+  alerte: { color: '#d97a70', soft: 'rgba(217, 122, 112, 0.18)' },
 };
+
+const patientTypeOptions = ['all', 'traumato', 'medical', 'douleurs_thoracique', 'chirurgical'];
+
+const patientTypeSelectableOptions = patientTypeOptions.filter((option) => option !== 'all');
 
 
 function normalizeStatus(value) {
@@ -44,6 +48,42 @@ function normalizeStatus(value) {
 
 function escapeText(value) {
   return String(value ?? '');
+}
+
+function normalizePatientTypeValue(value) {
+  const key = String(value || '').trim().toLowerCase();
+  if (key === 'traumato') return 'traumato';
+  if (key === 'chirurgical') return 'chirurgical';
+  if (key === 'douleurs_thoracique' || key === 'douleurs thoracique') return 'douleurs_thoracique';
+  return 'medical';
+}
+
+function loadPatientTypeFilter() {
+  try {
+    const raw = localStorage.getItem('bedboard_patient_type_filter');
+    const allowed = new Set(['all', 'traumato', 'medical', 'douleurs_thoracique', 'chirurgical']);
+    if (allowed.has(raw)) return raw;
+  } catch (error) {
+    console.error(error);
+  }
+  return 'all';
+}
+
+function loadVisiblePatientTypes(username) {
+  if (!username) return patientTypeSelectableOptions.map((option) => option);
+  try {
+    const raw = localStorage.getItem(`bedboard_visible_patient_types_${username}`);
+    const parsed = JSON.parse(raw || '[]');
+    if (!Array.isArray(parsed)) return patientTypeSelectableOptions.map((option) => option);
+    const allowed = new Set(patientTypeSelectableOptions.map((option) => option));
+    const clean = parsed
+      .map((value) => normalizePatientTypeValue(value))
+      .filter((value) => allowed.has(value));
+    return clean.length ? Array.from(new Set(clean)) : patientTypeSelectableOptions.map((option) => option);
+  } catch (error) {
+    console.error(error);
+    return patientTypeSelectableOptions.map((option) => option);
+  }
 }
 
 function loadCachedState() {
@@ -77,22 +117,40 @@ function App() {
   const [patients, setPatients] = useState(cached?.patients || []);
   const [stats, setStats] = useState(cached?.stats || initialStats);
   const [authenticated, setAuthenticated] = useState(false);
+  const [authResolved, setAuthResolved] = useState(false);
   const [user, setUser] = useState({ username: '', admin: false, role: 'user' });
   const [users, setUsers] = useState([]);
   const [screen, setScreen] = useState('beds');
-  const [callLanguage, setCallLanguage] = useState('fr-FR');
-  const [modalOpen, setModalOpen] = useState(false);
   const [confirm, setConfirm] = useState({ open: false, title: '', message: '', onConfirm: null });
   const [authForm, setAuthForm] = useState({ username: 'admin', password: '' });
-  const [authMessage, setAuthMessage] = useState('Connectez-vous pour gérer les lits et les patients sur ce poste.');
-  const [connectionState, setConnectionState] = useState('Liaison réseau en attente.');
-  const [newBed, setNewBed] = useState({ number: '', room: '', roomAlt: '', name: '', nameAlt: '', type: 'standard' });
-  const [newPatient, setNewPatient] = useState({ registrationNumber: '', name: '', bedNumber: '', triageScore: '0' });
+  const [authMessage, setAuthMessage] = useState('');
+  const [connectionState, setConnectionState] = useState('');
+  const [uiConfigForm, setUiConfigForm] = useState({ appName: 'BedBoard', logoDataUrl: '', locale: 'fr', clearLogo: false });
+  const [publicUiConfig, setPublicUiConfig] = useState({ appName: 'BedBoard', logoDataUrl: '', locale: 'fr' });
+  const [newBed, setNewBed] = useState({ number: '', room: '', name: '', type: 'standard' });
+  const [newPatient, setNewPatient] = useState({ registrationNumber: '', name: '', patientType: 'medical', bedNumber: '', triageScore: '0' });
+  const [patientTypeFilter, setPatientTypeFilter] = useState(() => loadPatientTypeFilter());
+  const [visiblePatientTypes, setVisiblePatientTypes] = useState(() => patientTypeSelectableOptions.map((option) => option));
   const [newUser, setNewUser] = useState({ username: '', password: '', role: 'user' });
   const [assignByBed, setAssignByBed] = useState({});
   const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [resetPasswordForm, setResetPasswordForm] = useState({ username: '', newPassword: '', confirmPassword: '' });
   const [gotifyForm, setGotifyForm] = useState({ enabled: false, url: '', token: '', priority: 8, tokenConfigured: false, clearToken: false });
+  const [securityConfigForm, setSecurityConfigForm] = useState({
+    adminInitUsername: 'admin',
+    adminInitPassword: '',
+    forceSecureCookie: true,
+    trustProxyHeaders: true,
+    enableHsts: true,
+    hstsMaxAge: 31536000,
+    hstsIncludeSubdomains: true,
+    hstsPreload: false,
+    gotifyTokenEncKey: '',
+    adminInitPasswordConfigured: false,
+    gotifyTokenEncKeyConfigured: false,
+    clearAdminInitPassword: false,
+    clearGotifyTokenEncKey: false,
+  });
   const [securityHealth, setSecurityHealth] = useState({ status: 'unknown', checks: [], loaded: false });
   const [bedEdits, setBedEdits] = useState({});
   const [auditLogs, setAuditLogs] = useState([]);
@@ -100,6 +158,9 @@ function App() {
   const [notice, setNotice] = useState({ type: '', text: '' });
 
   const isAdmin = user.admin;
+  const locale = normalizeLocale(publicUiConfig.locale);
+  const brandName = String(publicUiConfig.appName || 'BedBoard');
+  const brandLogo = String(publicUiConfig.logoDataUrl || '/logo.svg');
   const role = normalizeRole(user.role);
   const isReception = role === 'reception';
   const isTriage = role === 'triage';
@@ -107,8 +168,21 @@ function App() {
   const canManageBeds = authenticated && (role === 'admin' || role === 'user' || role === 'dechocage');
   const canManagePatients = authenticated && (role === 'admin' || role === 'user' || role === 'triage' || role === 'dechocage');
   const canArchivePatients = authenticated && (role === 'admin' || role === 'user' || role === 'dechocage');
+  const canCustomizePatientTypeVisibility = authenticated && (role === 'admin' || role === 'user' || role === 'dechocage');
   const canViewTriage = authenticated && !isReception;
+  const canViewPatientType = authenticated && !isReception && !isPatientPage;
   const securityNavStatus = String(securityHealth?.status || 'unknown').toLowerCase();
+  const localizedStatusMeta = useMemo(() => ({
+    libre: { ...statusMeta.libre, label: tr(locale, 'Libre', 'Free', 'شاغر') },
+    occupé: { ...statusMeta.occupé, label: tr(locale, 'Occupe', 'Occupied', 'مشغول') },
+    nettoyage: { ...statusMeta.nettoyage, label: tr(locale, 'Nettoyage', 'Cleaning', 'تنظيف') },
+    alerte: { ...statusMeta.alerte, label: tr(locale, 'Alerte', 'Alert', 'إنذار') },
+  }), [locale]);
+
+  useEffect(() => {
+    document.documentElement.lang = locale;
+    document.documentElement.dir = isRtlLocale(locale) ? 'rtl' : 'ltr';
+  }, [locale]);
 
   const api = async (url, options = {}) => {
     const response = await fetch(url, {
@@ -147,7 +221,7 @@ function App() {
       }
     } catch (error) {
       console.error(error);
-      showError('Action impossible pour le moment.');
+      showError(tr(locale, 'Action impossible pour le moment.', 'Action unavailable right now.', 'الإجراء غير متاح حاليًا.'));
     } finally {
       closeConfirm();
     }
@@ -163,18 +237,62 @@ function App() {
     setUsers(Array.isArray(data.users) ? data.users : []);
   };
 
+  const refreshPublicUIConfig = async () => {
+    const response = await fetch('/api/public/ui-config', { credentials: 'include' });
+    if (!response.ok) return;
+    const data = await response.json().catch(() => ({}));
+    setPublicUiConfig({
+      appName: data.appName || 'BedBoard',
+      logoDataUrl: data.logoDataUrl || '',
+      locale: normalizeLocale(data.locale),
+    });
+  };
+
+  const refreshUIConfig = async () => {
+    if (!isAdmin) return;
+    const response = await api('/api/admin/ui/config', { method: 'GET' });
+    if (!response.ok) {
+      showError(await readErrorMessage(response, tr(locale, 'Lecture configuration interface impossible.', 'Unable to load UI configuration.', 'تعذر قراءة إعدادات الواجهة.')));
+      return;
+    }
+    const data = await response.json().catch(() => ({}));
+    setUiConfigForm({
+      appName: data.appName || 'BedBoard',
+      logoDataUrl: data.logoDataUrl || '',
+      locale: normalizeLocale(data.locale),
+      clearLogo: false,
+    });
+  };
+
+  const saveUiConfig = async () => {
+    if (!isAdmin) return;
+    const response = await api('/api/admin/ui/config', {
+      method: 'POST',
+      body: JSON.stringify({
+        appName: uiConfigForm.appName,
+        logoDataUrl: uiConfigForm.logoDataUrl,
+        locale: uiConfigForm.locale,
+        clearLogo: Boolean(uiConfigForm.clearLogo),
+      }),
+    });
+    if (!response.ok) {
+      showError(await readErrorMessage(response, tr(locale, 'Enregistrement configuration interface impossible.', 'Unable to save UI configuration.', 'تعذر حفظ إعدادات الواجهة.')));
+      return;
+    }
+    await refreshPublicUIConfig();
+    await refreshUIConfig();
+    showSuccess(tr(locale, 'Configuration interface enregistree.', 'UI configuration saved.', 'تم حفظ إعدادات الواجهة.'));
+  };
+
   const syncMe = async () => {
     const response = await fetch('/api/me', { credentials: 'include' });
     const data = await response.json().catch(() => ({ authenticated: false, username: '', admin: false, role: 'user' }));
     setAuthenticated(Boolean(data.authenticated));
     setUser({ username: data.username || '', admin: Boolean(data.admin), role: normalizeRole(data.role) });
-    if (data.authenticated) {
-      setModalOpen(false);
-    }
     if (data.authenticated && data.username) {
-      setConnectionState(`Connecté: ${data.username}`);
+      setConnectionState(`${tr(locale, 'Connecte', 'Connected', 'متصل')}: ${data.username}`);
     } else {
-      setConnectionState('Accès local');
+      setConnectionState(tr(locale, 'Acces local', 'Local access', 'وصول محلي'));
       setBeds([]);
       setPatients([]);
       setStats(initialStats);
@@ -187,6 +305,7 @@ function App() {
     if (data.authenticated && normalizeRole(data.role) === 'reception' && window.location.pathname !== '/patient-view') {
       window.location.assign('/patient-view');
     }
+    setAuthResolved(true);
   };
 
   const refreshState = async () => {
@@ -239,11 +358,77 @@ function App() {
       }),
     });
     if (!response.ok) {
-      showError(await readErrorMessage(response, 'Enregistrement Gotify impossible.'));
+      showError(await readErrorMessage(response, tr(locale, 'Enregistrement Gotify impossible.', 'Unable to save Gotify settings.', 'تعذر حفظ إعدادات Gotify.')));
       return;
     }
     await refreshGotifySettings();
-    showSuccess('Configuration Gotify enregistrée.');
+    showSuccess(tr(locale, 'Configuration Gotify enregistree.', 'Gotify settings saved.', 'تم حفظ إعدادات Gotify.'));
+  };
+
+  const testGotifySettings = async () => {
+    if (!isAdmin) return;
+    const response = await api('/api/admin/integrations/gotify/test', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    if (!response.ok) {
+      showError(await readErrorMessage(response, tr(locale, 'Test Gotify impossible.', 'Unable to send Gotify test.', 'تعذر إرسال اختبار Gotify.')));
+      return;
+    }
+    showSuccess(tr(locale, 'Notification test Gotify envoyee.', 'Gotify test notification sent.', 'تم إرسال إشعار اختبار Gotify.'));
+  };
+
+  const refreshSecurityConfig = async () => {
+    if (!isAdmin) return;
+    const response = await api('/api/admin/security/config', { method: 'GET' });
+    if (!response.ok) {
+      showError(await readErrorMessage(response, 'Lecture configuration sécurité impossible.'));
+      return;
+    }
+    const data = await response.json().catch(() => ({}));
+    setSecurityConfigForm((current) => ({
+      ...current,
+      adminInitUsername: data.adminInitUsername || 'admin',
+      adminInitPassword: '',
+      forceSecureCookie: Boolean(data.forceSecureCookie),
+      trustProxyHeaders: Boolean(data.trustProxyHeaders),
+      enableHsts: Boolean(data.enableHsts),
+      hstsMaxAge: Number(data.hstsMaxAge || 31536000),
+      hstsIncludeSubdomains: Boolean(data.hstsIncludeSubdomains),
+      hstsPreload: Boolean(data.hstsPreload),
+      gotifyTokenEncKey: '',
+      adminInitPasswordConfigured: Boolean(data.adminInitPasswordConfigured),
+      gotifyTokenEncKeyConfigured: Boolean(data.gotifyTokenEncKeyConfigured),
+      clearAdminInitPassword: false,
+      clearGotifyTokenEncKey: false,
+    }));
+  };
+
+  const saveSecurityConfig = async () => {
+    if (!isAdmin) return;
+    const response = await api('/api/admin/security/config', {
+      method: 'POST',
+      body: JSON.stringify({
+        adminInitUsername: securityConfigForm.adminInitUsername,
+        adminInitPassword: securityConfigForm.adminInitPassword,
+        forceSecureCookie: Boolean(securityConfigForm.forceSecureCookie),
+        trustProxyHeaders: Boolean(securityConfigForm.trustProxyHeaders),
+        enableHsts: Boolean(securityConfigForm.enableHsts),
+        hstsMaxAge: Number(securityConfigForm.hstsMaxAge || 0),
+        hstsIncludeSubdomains: Boolean(securityConfigForm.hstsIncludeSubdomains),
+        hstsPreload: Boolean(securityConfigForm.hstsPreload),
+        gotifyTokenEncKey: securityConfigForm.gotifyTokenEncKey,
+        clearAdminInitPassword: Boolean(securityConfigForm.clearAdminInitPassword),
+        clearGotifyTokenEncKey: Boolean(securityConfigForm.clearGotifyTokenEncKey),
+      }),
+    });
+    if (!response.ok) {
+      showError(await readErrorMessage(response, 'Enregistrement configuration sécurité impossible.'));
+      return;
+    }
+    await refreshSecurityConfig();
+    await refreshSecurityHealth();
+    showSuccess('Configuration sécurité enregistrée.');
   };
 
   const refreshSecurityHealth = async () => {
@@ -253,7 +438,7 @@ function App() {
     }
     const response = await api('/api/admin/security/health', { method: 'GET' });
     if (!response.ok) {
-      const fallback = await readErrorMessage(response, 'Lecture audit sécurité impossible.');
+      const fallback = await readErrorMessage(response, tr(locale, 'Lecture audit securite impossible.', 'Unable to load security audit.', 'تعذر قراءة تدقيق الأمان.'));
       setSecurityHealth({ status: 'unknown', checks: [], loaded: true, error: fallback });
       return;
     }
@@ -280,7 +465,7 @@ function App() {
 
   const connectStream = () => {
     const stream = new EventSource('/api/stream');
-    setConnectionState('Connexion locale...');
+    setConnectionState(tr(locale, 'Connexion locale...', 'Connecting locally...', 'جار الاتصال محليًا...'));
 
     let refreshTimer = null;
     const scheduleRefresh = () => {
@@ -288,7 +473,7 @@ function App() {
       refreshTimer = setTimeout(() => {
         refreshTimer = null;
         refreshState().catch(() => {
-          setConnectionState('Synchronisation locale interrompue.');
+          setConnectionState(tr(locale, 'Synchronisation locale interrompue.', 'Local synchronization interrupted.', 'توقفت المزامنة المحلية.'));
         });
       }, 120);
     };
@@ -299,17 +484,20 @@ function App() {
         setBeds(Array.isArray(data.beds) ? data.beds : []);
         setPatients(Array.isArray(data.patients) ? data.patients : []);
         setStats(data.stats || initialStats);
-        setConnectionState('Connecté.');
+        setConnectionState(tr(locale, 'Connecte.', 'Connected.', 'متصل.'));
       } catch (error) {
         console.error(error);
       }
     });
 
-    ['state.changed', 'bed.updated', 'bed.created', 'bed.deleted', 'patient.updated', 'patient.archived', 'user.updated', 'system.backup', 'system.restore'].forEach((eventName) => {
+    ['state.changed', 'bed.updated', 'bed.created', 'bed.deleted', 'patient.updated', 'patient.archived', 'user.updated', 'system.backup', 'system.restore', 'system.settings'].forEach((eventName) => {
       stream.addEventListener(eventName, () => {
         scheduleRefresh();
         if (eventName === 'user.updated') {
           refreshUsers().catch(() => {});
+        }
+        if (eventName === 'system.settings') {
+          refreshPublicUIConfig().catch(() => {});
         }
         if (eventName === 'system.restore' || eventName === 'bed.updated') {
           refreshAudit().catch(() => {});
@@ -344,7 +532,7 @@ function App() {
           setBeds(Array.isArray(data.beds) ? data.beds : []);
           setPatients(Array.isArray(data.patients) ? data.patients : []);
           setStats(data.stats || initialStats);
-          setConnectionState('Connecté.');
+          setConnectionState(tr(locale, 'Connecte.', 'Connected.', 'متصل.'));
         }
       } catch (error) {
         console.error(error);
@@ -352,7 +540,7 @@ function App() {
     };
 
     stream.onerror = () => {
-      setConnectionState('Connexion interrompue.');
+      setConnectionState(tr(locale, 'Connexion interrompue.', 'Connection interrupted.', 'انقطع الاتصال.'));
     };
 
     return stream;
@@ -360,8 +548,10 @@ function App() {
 
   useEffect(() => {
     let stream;
-    syncMe().finally(() => {
-      stream = connectStream();
+    refreshPublicUIConfig().finally(() => {
+      syncMe().finally(() => {
+        stream = connectStream();
+      });
     });
     return () => {
       if (stream) {
@@ -392,12 +582,53 @@ function App() {
     window.localStorage.setItem('bedboard_current_role', role);
   }, [role]);
 
+  useEffect(() => {
+    localStorage.setItem('bedboard_patient_type_filter', patientTypeFilter);
+  }, [patientTypeFilter]);
+
+  useEffect(() => {
+    setAuthMessage(tr(locale, 'Connectez-vous pour gerer les lits et les patients sur ce poste.', 'Sign in to manage beds and patients on this station.', 'سجّل الدخول لإدارة الأسرة والمرضى في هذه المحطة.'));
+    if (!authenticated) {
+      setConnectionState(tr(locale, 'Acces local', 'Local access', 'وصول محلي'));
+    }
+  }, [locale, authenticated]);
+
+  useEffect(() => {
+    if (!canCustomizePatientTypeVisibility || !user.username) {
+      setVisiblePatientTypes(patientTypeSelectableOptions.map((option) => option));
+      return;
+    }
+    setVisiblePatientTypes(loadVisiblePatientTypes(user.username));
+  }, [canCustomizePatientTypeVisibility, user.username]);
+
+  useEffect(() => {
+    if (!canCustomizePatientTypeVisibility || !user.username) return;
+    localStorage.setItem(`bedboard_visible_patient_types_${user.username}`, JSON.stringify(visiblePatientTypes));
+  }, [canCustomizePatientTypeVisibility, user.username, visiblePatientTypes]);
+
   const activePatients = useMemo(() => patients.filter((p) => p.status !== 'archived'), [patients]);
-  const bedByNumber = useMemo(() => {
-    const map = new Map();
-    beds.forEach((bed) => map.set(Number(bed.number), bed));
-    return map;
-  }, [beds]);
+  const visiblePatientTypeSet = useMemo(() => new Set(visiblePatientTypes), [visiblePatientTypes]);
+  const visiblePatients = useMemo(() => {
+    if (!canCustomizePatientTypeVisibility) return activePatients;
+    return activePatients.filter((patient) => visiblePatientTypeSet.has(normalizePatientTypeValue(patient.patientType)));
+  }, [activePatients, canCustomizePatientTypeVisibility, visiblePatientTypeSet]);
+  const filteredPatients = useMemo(() => {
+    if (!canCustomizePatientTypeVisibility || patientTypeFilter === 'all') return visiblePatients;
+    return visiblePatients.filter((patient) => normalizePatientTypeValue(patient.patientType) === patientTypeFilter);
+  }, [canCustomizePatientTypeVisibility, visiblePatients, patientTypeFilter]);
+
+  const toggleVisiblePatientType = (patientType) => {
+    setVisiblePatientTypes((current) => {
+      if (current.includes(patientType)) {
+        if (current.length <= 1) {
+          showError(tr(locale, 'Selectionnez au moins un type patient.', 'Select at least one patient type.', 'اختر نوع مريض واحدًا على الأقل.'));
+          return current;
+        }
+        return current.filter((value) => value !== patientType);
+      }
+      return [...current, patientType];
+    });
+  };
 
   useEffect(() => {
     setBedEdits((current) => {
@@ -412,26 +643,6 @@ function App() {
       return next;
     });
   }, [beds]);
-
-  const speakPatientCall = (patient) => {
-    if (!('speechSynthesis' in window)) {
-      showError('Synthèse vocale non disponible sur ce navigateur.');
-      return;
-    }
-    if (!patient?.bedNumber) {
-      showError('Patient non assigné, appel vocal indisponible.');
-      return;
-    }
-    const bed = bedByNumber.get(Number(patient.bedNumber));
-    const roomName = bed?.roomAlt || bed?.room || patient.roomNameAlt || patient.roomName || 'Chambre';
-    const bedName = bed?.nameAlt || bed?.name || patient.bedNameAlt || patient.bedName || `Lit ${patient.bedNumber}`;
-    const text = getCallTemplate(callLanguage, patient.name || patient.registrationNumber, roomName, bedName);
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = callLanguage;
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utterance);
-    showSuccess(`Appel vocal lancé pour ${patient.registrationNumber}.`);
-  };
 
   const playUrgentBeep = () => {
     try {
@@ -458,33 +669,33 @@ function App() {
     if (!isAdmin) {
       return (
         <tr>
-          <td colSpan="3"><div className="empty">Réservé à l’admin.</div></td>
+          <td colSpan="3"><div className="empty">{tr(locale, 'Reserve a l admin.', 'Admin only.', 'للمدير فقط.')}</div></td>
         </tr>
       );
     }
     if (!users.length) {
       return (
         <tr>
-          <td colSpan="3"><div className="empty">Aucun utilisateur.</div></td>
+          <td colSpan="3"><div className="empty">{tr(locale, 'Aucun utilisateur.', 'No users.', 'لا يوجد مستخدمون.')}</div></td>
         </tr>
       );
     }
     return users.map((item) => (
       <tr key={item.username}>
         <td>{escapeText(item.username)}</td>
-        <td>{escapeText(item.role || (item.admin ? 'admin' : 'user'))}</td>
+        <td>{roleLabel(locale, item.role || (item.admin ? 'admin' : 'user'))}</td>
         <td>
           <button
             className="mini-btn"
             type="button"
             onClick={() => setResetPasswordForm((current) => ({ ...current, username: item.username }))}
           >
-            Changer mot de passe
+            {tr(locale, 'Changer mot de passe', 'Change password', 'تغيير كلمة المرور')}
           </button>
         </td>
       </tr>
     ));
-  }, [users, isAdmin]);
+  }, [users, isAdmin, locale]);
 
   const createBed = async () => {
     const response = await api('/api/beds', {
@@ -492,27 +703,25 @@ function App() {
       body: JSON.stringify({
         number: Number(newBed.number),
         room: newBed.room,
-        roomAlt: newBed.roomAlt,
         name: newBed.name,
-        nameAlt: newBed.nameAlt,
         type: newBed.type,
       }),
     });
     if (response.ok) {
-      setNewBed({ number: '', room: '', roomAlt: '', name: '', nameAlt: '', type: 'standard' });
-      showSuccess('Lit créé.');
+      setNewBed({ number: '', room: '', name: '', type: 'standard' });
+      showSuccess(tr(locale, 'Lit cree.', 'Bed created.', 'تم إنشاء السرير.'));
       return;
     }
-    showError(await readErrorMessage(response, 'Création lit impossible.'));
+    showError(await readErrorMessage(response, tr(locale, 'Creation lit impossible.', 'Unable to create bed.', 'تعذر إنشاء السرير.')));
   };
 
   const savePatient = async () => {
     if (!canManagePatients) {
-      showError('Action non autorisée pour votre profil.');
+      showError(tr(locale, 'Action non autorisee pour votre profil.', 'Action not allowed for your role.', 'الإجراء غير مسموح لدورك.'));
       return;
     }
     if (isTriage && Number(newPatient.bedNumber) > 0) {
-      showError('Le profil triage ne peut pas affecter un lit.');
+      showError(tr(locale, 'Le profil triage ne peut pas affecter un lit.', 'Triage role cannot assign beds.', 'دور الفرز لا يمكنه تخصيص سرير.'));
       return;
     }
     const response = await api('/api/patients', {
@@ -520,16 +729,17 @@ function App() {
       body: JSON.stringify({
         registrationNumber: newPatient.registrationNumber,
         name: newPatient.name,
+        patientType: newPatient.patientType,
         bedNumber: Number(newPatient.bedNumber),
         triageScore: Number(newPatient.triageScore),
       }),
     });
     if (response.ok) {
-      setNewPatient({ registrationNumber: '', name: '', bedNumber: '', triageScore: '0' });
-      showSuccess('Patient enregistré.');
+      setNewPatient({ registrationNumber: '', name: '', patientType: 'medical', bedNumber: '', triageScore: '0' });
+      showSuccess(tr(locale, 'Patient enregistre.', 'Patient saved.', 'تم حفظ المريض.'));
       return;
     }
-    showError(await readErrorMessage(response, 'Enregistrement patient impossible.'));
+    showError(await readErrorMessage(response, tr(locale, 'Enregistrement patient impossible.', 'Unable to save patient.', 'تعذر حفظ المريض.')));
   };
 
   const authenticate = async () => {
@@ -544,10 +754,10 @@ function App() {
       setAuthenticated(true);
       const nextRole = normalizeRole(data.role);
       setUser({ username: data.username || authForm.username || 'admin', admin: Boolean(data.admin), role: nextRole });
-      setModalOpen(false);
       setAuthForm((current) => ({ ...current, password: '' }));
-      setConnectionState(data.username ? `Connecté: ${data.username}` : 'Connecté.');
-      showSuccess('Connexion réussie.');
+      setConnectionState(data.username ? `${tr(locale, 'Connecte', 'Connected', 'متصل')}: ${data.username}` : tr(locale, 'Connecte.', 'Connected.', 'متصل.'));
+      showSuccess(tr(locale, 'Connexion reussie.', 'Login successful.', 'تم تسجيل الدخول بنجاح.'));
+      await refreshState().catch(() => {});
       if (data.admin) {
         await refreshUsers();
       }
@@ -556,7 +766,7 @@ function App() {
       }
       return;
     }
-    const message = await readErrorMessage(response, 'Identifiants invalides.');
+    const message = await readErrorMessage(response, tr(locale, 'Identifiants invalides.', 'Invalid credentials.', 'بيانات اعتماد غير صالحة.'));
     setAuthMessage(message);
     showError(message);
   };
@@ -566,13 +776,15 @@ function App() {
     setAuthenticated(false);
     setUser({ username: '', admin: false, role: 'user' });
     setUsers([]);
-    setConnectionState('Accès local');
+    setConnectionState(tr(locale, 'Acces local', 'Local access', 'وصول محلي'));
     setBeds([]);
     setPatients([]);
     setStats(initialStats);
     localStorage.removeItem('bedboard_state_cache');
     localStorage.removeItem('bedboard_current_role');
-    showSuccess('Déconnexion effectuée.');
+    localStorage.removeItem('bedboard_patient_type_filter');
+    setPatientTypeFilter('all');
+    showSuccess(tr(locale, 'Deconnexion effectuee.', 'Logged out.', 'تم تسجيل الخروج.'));
   };
 
   const createUser = async () => {
@@ -583,19 +795,19 @@ function App() {
     if (response.ok) {
       setNewUser({ username: '', password: '', role: 'user' });
       await refreshUsers();
-      showSuccess('Utilisateur créé.');
+      showSuccess(tr(locale, 'Utilisateur cree.', 'User created.', 'تم إنشاء المستخدم.'));
       return;
     }
-    showError(await readErrorMessage(response, 'Création utilisateur impossible.'));
+    showError(await readErrorMessage(response, tr(locale, 'Creation utilisateur impossible.', 'Unable to create user.', 'تعذر إنشاء المستخدم.')));
   };
 
   const changeOwnPassword = async () => {
     if (!passwordForm.currentPassword || !passwordForm.newPassword) {
-      showError('Mot de passe actuel et nouveau requis.');
+      showError(tr(locale, 'Mot de passe actuel et nouveau requis.', 'Current and new password are required.', 'كلمة المرور الحالية والجديدة مطلوبة.'));
       return;
     }
     if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-      showError('Confirmation du nouveau mot de passe invalide.');
+      showError(tr(locale, 'Confirmation du nouveau mot de passe invalide.', 'Password confirmation does not match.', 'تأكيد كلمة المرور غير مطابق.'));
       return;
     }
     const response = await api('/api/users/password', {
@@ -607,21 +819,21 @@ function App() {
     });
     if (response.ok) {
       setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
-      showSuccess('Mot de passe mis à jour.');
+      showSuccess(tr(locale, 'Mot de passe mis a jour.', 'Password updated.', 'تم تحديث كلمة المرور.'));
       return;
     }
-    const message = await response.text().catch(() => 'Changement de mot de passe impossible.');
-    showError(message || 'Changement de mot de passe impossible.');
+    const message = await response.text().catch(() => tr(locale, 'Changement de mot de passe impossible.', 'Unable to change password.', 'تعذر تغيير كلمة المرور.'));
+    showError(message || tr(locale, 'Changement de mot de passe impossible.', 'Unable to change password.', 'تعذر تغيير كلمة المرور.'));
   };
 
   const resetUserPassword = async () => {
     if (!isAdmin) return;
     if (!resetPasswordForm.username || !resetPasswordForm.newPassword) {
-      showError('Utilisateur et nouveau mot de passe requis.');
+      showError(tr(locale, 'Utilisateur et nouveau mot de passe requis.', 'Username and new password are required.', 'اسم المستخدم وكلمة المرور الجديدة مطلوبان.'));
       return;
     }
     if (resetPasswordForm.newPassword !== resetPasswordForm.confirmPassword) {
-      showError('Confirmation du nouveau mot de passe invalide.');
+      showError(tr(locale, 'Confirmation du nouveau mot de passe invalide.', 'Password confirmation does not match.', 'تأكيد كلمة المرور غير مطابق.'));
       return;
     }
     const response = await api('/api/users/password', {
@@ -633,16 +845,16 @@ function App() {
     });
     if (response.ok) {
       setResetPasswordForm({ username: '', newPassword: '', confirmPassword: '' });
-      showSuccess('Mot de passe utilisateur mis à jour.');
+      showSuccess(tr(locale, 'Mot de passe utilisateur mis a jour.', 'User password updated.', 'تم تحديث كلمة مرور المستخدم.'));
       return;
     }
-    const message = await response.text().catch(() => 'Réinitialisation mot de passe impossible.');
-    showError(message || 'Réinitialisation mot de passe impossible.');
+    const message = await response.text().catch(() => tr(locale, 'Reinitialisation mot de passe impossible.', 'Unable to reset password.', 'تعذر إعادة تعيين كلمة المرور.'));
+    showError(message || tr(locale, 'Reinitialisation mot de passe impossible.', 'Unable to reset password.', 'تعذر إعادة تعيين كلمة المرور.'));
   };
 
   const openSettings = async () => {
     setScreen('settings');
-    await Promise.all([refreshUsers(), refreshAudit(true), refreshGotifySettings(), refreshSecurityHealth()]);
+    await Promise.all([refreshUsers(), refreshAudit(true), refreshGotifySettings(), refreshSecurityConfig(), refreshSecurityHealth(), refreshUIConfig()]);
   };
 
   const openAccount = () => {
@@ -661,12 +873,12 @@ function App() {
     if (!isAdmin) return;
     const response = await api('/api/admin/backup', { method: 'POST', body: JSON.stringify({}) });
     if (!response.ok) {
-      showError(await readErrorMessage(response, 'Sauvegarde impossible.'));
+      showError(await readErrorMessage(response, tr(locale, 'Sauvegarde impossible.', 'Backup failed.', 'فشل النسخ الاحتياطي.')));
       return;
     }
     const data = await response.json().catch(() => ({}));
     setLastBackupFile(data.file || '');
-    showSuccess('Sauvegarde SQLite créée.');
+    showSuccess(tr(locale, 'Sauvegarde SQLite creee.', 'SQLite backup created.', 'تم إنشاء نسخة SQLite الاحتياطية.'));
     await refreshAudit();
   };
 
@@ -674,19 +886,19 @@ function App() {
     if (!isAdmin) return;
     setConfirm({
       open: true,
-      title: 'Restaurer la dernière sauvegarde',
-      message: 'Cette action remplace la base SQLite actuelle. Continuer ?',
+      title: tr(locale, 'Restaurer la derniere sauvegarde', 'Restore latest backup', 'استعادة آخر نسخة احتياطية'),
+      message: tr(locale, 'Cette action remplace la base SQLite actuelle. Continuer ?', 'This action replaces current SQLite database. Continue?', 'هذا الإجراء يستبدل قاعدة SQLite الحالية. المتابعة؟'),
       onConfirm: async () => {
         const response = await api('/api/admin/restore', { method: 'POST', body: JSON.stringify({}) });
         if (!response.ok) {
-          showError(await readErrorMessage(response, 'Restauration impossible.'));
+          showError(await readErrorMessage(response, tr(locale, 'Restauration impossible.', 'Restore failed.', 'فشلت الاستعادة.')));
           return;
         }
         const data = await response.json().catch(() => ({}));
         setLastBackupFile(data.file || '');
         await refreshState();
         await refreshAudit();
-        showSuccess('Restauration SQLite terminée.');
+        showSuccess(tr(locale, 'Restauration SQLite terminee.', 'SQLite restore completed.', 'اكتملت استعادة SQLite.'));
       },
     });
   };
@@ -707,38 +919,92 @@ function App() {
 
   const patientPanel = useMemo(() => {
     const current = currentPatient;
-    if (!current) return <div className="empty">Aucun patient.</div>;
-    const level = triageLevelOf(current);
-    const triage = triageMeta[level] || triageMeta[0];
+    if (!current) return <div className="empty">{tr(locale, 'Aucun patient.', 'No patient.', 'لا يوجد مريض.')}</div>;
     return (
       <div className="patient-center">
-        {canViewTriage ? <div className="triage-pill patient-triage" style={{ background: triage.color }}>{triage.label}</div> : null}
-        <div className="patient-line">Patient {escapeText(current.registrationNumber)} — {current.bedNumber ? `${escapeText(current.roomName || 'Chambre')} - ${escapeText(current.bedName || `Lit ${current.bedNumber}`)}` : 'Non assigné'}</div>
+        <div className="patient-line">{tr(locale, 'Patient', 'Patient', 'المريض')} {escapeText(current.registrationNumber)} - {current.bedNumber ? `${escapeText(current.roomName || tr(locale, 'Chambre', 'Room', 'غرفة'))} - ${escapeText(current.bedName || `${tr(locale, 'Lit', 'Bed', 'سرير')} ${current.bedNumber}`)}` : tr(locale, 'Non assigne', 'Unassigned', 'غير مخصص')}</div>
       </div>
     );
-  }, [currentPatient, canViewTriage]);
+  }, [currentPatient, locale]);
 
   if (isPatientPage) {
+    if (!authResolved) {
+      return (
+        <div className="app patient-page-shell">
+          <div className="section-card patient-page-card">
+            <div className="empty">{tr(locale, 'Verification de session en cours...', 'Checking session...', 'جار التحقق من الجلسة...')}</div>
+          </div>
+        </div>
+      );
+    }
     if (!authenticated) {
       window.location.assign('/');
       return null;
     }
     return (
       <PatientViewPage
-        callLanguage={callLanguage}
-        setCallLanguage={setCallLanguage}
-        callLanguageOptions={callLanguageOptions}
-        currentPatient={currentPatient}
-        speakPatientCall={speakPatientCall}
         openMainPage={openMainPage}
         patientPanel={patientPanel}
+        locale={locale}
+        brandName={brandName}
+        brandLogo={brandLogo}
       />
     );
   }
 
   if (authenticated && isReception) {
     return (
-      <ReceptionPage logout={logout} openPatientPage={openPatientPage} />
+      <ReceptionPage logout={logout} openPatientPage={openPatientPage} locale={locale} brandName={brandName} brandLogo={brandLogo} />
+    );
+  }
+
+  if (!authResolved) {
+    return (
+      <div className="app login-shell">
+        <div className="section-card login-card">
+          <div className="empty">{tr(locale, 'Verification de session en cours...', 'Checking session...', 'جار التحقق من الجلسة...')}</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!authenticated) {
+    return (
+      <div className="app login-shell">
+        {notice.text ? (
+          <div className={`notice ${notice.type === 'error' ? 'error' : 'success'}`} role="status" aria-live="polite">
+            <span>{notice.text}</span>
+            <button className="notice-close" type="button" aria-label={tr(locale, 'Fermer la notification', 'Close notification', 'إغلاق الإشعار')} onClick={() => setNotice({ type: '', text: '' })}>
+              {tr(locale, 'Fermer', 'Close', 'إغلاق')}
+            </button>
+          </div>
+        ) : null}
+        <div className="section-card login-card">
+          <div className="login-brand">
+            <div className="brand-mark login-brand-mark"><img src={brandLogo} alt={tr(locale, "Logo de l'hopital", 'Hospital logo', 'شعار المستشفى')} /></div>
+            <h1 className="login-title">{brandName}</h1>
+            <p className="small-note">{authMessage}</p>
+          </div>
+          <form
+            className="login-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              authenticate();
+            }}
+          >
+            <label>
+              {tr(locale, 'Identifiant', 'Username', 'اسم المستخدم')}
+              <input className="form-control" value={authForm.username} type="text" onChange={(event) => setAuthForm((current) => ({ ...current, username: event.target.value }))} />
+            </label>
+            <label>
+              {tr(locale, 'Mot de passe', 'Password', 'كلمة المرور')}
+              <input className="form-control" value={authForm.password} type="password" onChange={(event) => setAuthForm((current) => ({ ...current, password: event.target.value }))} />
+            </label>
+            <button className="btn primary" type="submit">{tr(locale, 'Se connecter', 'Sign in', 'تسجيل الدخول')}</button>
+            <p className="small-note login-state">{connectionState}</p>
+          </form>
+        </div>
+      </div>
     );
   }
 
@@ -746,28 +1012,22 @@ function App() {
     <div className="app">
       <div className="navbar">
         <div className="nav-left">
-          <div className="brand-mark"><img src="/logo.svg" alt="Logo de l'hôpital" /></div>
+          <div className="brand-mark"><img src={brandLogo} alt={tr(locale, "Logo de l'hopital", 'Hospital logo', 'شعار المستشفى')} /></div>
           <div className="nav-title">
-            <strong>BedBoard</strong>
+            <strong>{brandName}</strong>
             <span>{connectionState}</span>
           </div>
         </div>
         <div className="nav-actions">
-          <select className="form-select" value={callLanguage} onChange={(event) => setCallLanguage(event.target.value)}>
-            {callLanguageOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
           {authenticated && isAdmin ? (
             <button className={`security-chip inline ${securityNavStatus}`} type="button" onClick={openSettings}>
-              Securite: {securityNavStatus.toUpperCase()}
+              {tr(locale, 'Securite', 'Security', 'الأمان')}: {securityNavStatus.toUpperCase()}
             </button>
           ) : null}
-          {authenticated && user.username ? <div className="user-chip">{user.username} ({role})</div> : null}
-          <button className="btn" type="button" onClick={openPatientPage}>Page patient</button>
-          {authenticated && isAdmin ? <button className="btn" type="button" onClick={openSettings}>Paramètres</button> : null}
-          {!authenticated ? <button className="btn" type="button" onClick={() => setModalOpen(true)}>Se connecter</button> : null}
-          {authenticated ? <button className="btn primary" type="button" onClick={logout}>Déconnexion</button> : null}
+          {authenticated && user.username ? <div className="user-chip">{user.username} ({roleLabel(locale, role)})</div> : null}
+          <button className="btn" type="button" onClick={openPatientPage}>{tr(locale, 'Page patient', 'Patient page', 'صفحة المرضى')}</button>
+          {authenticated && isAdmin ? <button className="btn" type="button" onClick={openSettings}>{tr(locale, 'Parametres', 'Settings', 'الإعدادات')}</button> : null}
+          {authenticated ? <button className="btn primary" type="button" onClick={logout}>{tr(locale, 'Deconnexion', 'Logout', 'تسجيل الخروج')}</button> : null}
         </div>
       </div>
 
@@ -777,10 +1037,10 @@ function App() {
           <button
             className="notice-close"
             type="button"
-            aria-label="Fermer la notification"
+            aria-label={tr(locale, 'Fermer la notification', 'Close notification', 'إغلاق الإشعار')}
             onClick={() => setNotice({ type: '', text: '' })}
           >
-            Fermer
+            {tr(locale, 'Fermer', 'Close', 'إغلاق')}
           </button>
         </div>
       ) : null}
@@ -788,33 +1048,33 @@ function App() {
       <div className="shell">
         <div className="hero">
           <div className="brand-card">
-            <p className="eyebrow">BedBoard</p>
-            <h1>Gestion des lits et des patients</h1>
+            <p className="eyebrow">{brandName}</p>
+            <h1>{tr(locale, 'Gestion des lits et des patients', 'Bed and patient management', 'إدارة الأسرة والمرضى')}</h1>
             
             <div className="status-row">
-              <span className="pill"><span className="dot" style={{ background: 'var(--green)' }} /> Libre</span>
-              <span className="pill"><span className="dot" style={{ background: 'var(--blue)' }} /> Occupé</span>
-              <span className="pill"><span className="dot" style={{ background: 'var(--violet)' }} /> Nettoyage</span>
-              <span className="pill"><span className="dot" style={{ background: 'var(--red)' }} /> Alerte</span>
+              <span className="pill"><span className="dot" style={{ background: 'var(--green)' }} /> {tr(locale, 'Libre', 'Free', 'شاغر')}</span>
+              <span className="pill"><span className="dot" style={{ background: 'var(--blue)' }} /> {tr(locale, 'Occupe', 'Occupied', 'مشغول')}</span>
+              <span className="pill"><span className="dot" style={{ background: 'var(--violet)' }} /> {tr(locale, 'Nettoyage', 'Cleaning', 'تنظيف')}</span>
+              <span className="pill"><span className="dot" style={{ background: 'var(--red)' }} /> {tr(locale, 'Alerte', 'Alert', 'إنذار')}</span>
             </div>
           </div>
           <div className="side-card">
             <div className="stats-grid">
-              <div className="stat"><span>Total lits</span><strong>{stats.totalBeds || 0}</strong></div>
-              <div className="stat"><span>Occupés</span><strong>{stats.occupiedBeds || 0}</strong></div>
-              <div className="stat"><span>Libres</span><strong>{stats.freeBeds || 0}</strong></div>
-              <div className="stat"><span>Patients</span><strong>{stats.totalPatients || 0}</strong></div>
+              <div className="stat"><span>{tr(locale, 'Total lits', 'Total beds', 'إجمالي الأسرة')}</span><strong>{stats.totalBeds || 0}</strong></div>
+              <div className="stat"><span>{tr(locale, 'Occupes', 'Occupied', 'مشغولة')}</span><strong>{stats.occupiedBeds || 0}</strong></div>
+              <div className="stat"><span>{tr(locale, 'Libres', 'Free', 'شاغرة')}</span><strong>{stats.freeBeds || 0}</strong></div>
+              <div className="stat"><span>{tr(locale, 'Patients', 'Patients', 'المرضى')}</span><strong>{stats.totalPatients || 0}</strong></div>
             </div>
           </div>
         </div>
 
         <div className="section-card">
           <div className="tab-strip">
-            {canManageBeds ? <button className={`tab-btn ${screen === 'beds' ? 'active' : ''}`} type="button" onClick={() => setScreen('beds')}>Lits</button> : null}
-            {canManagePatients ? <button className={`tab-btn ${screen === 'patients' ? 'active' : ''}`} type="button" onClick={() => setScreen('patients')}>Patients</button> : null}
-            {authenticated && isAdmin ? <button className={`tab-btn ${screen === 'stats' ? 'active' : ''}`} type="button" onClick={() => setScreen('stats')}>Statistiques</button> : null}
-            {authenticated ? <button className={`tab-btn ${screen === 'account' ? 'active' : ''}`} type="button" onClick={openAccount}>Mon compte</button> : null}
-            {authenticated && isAdmin ? <button className={`tab-btn ${screen === 'settings' ? 'active' : ''}`} type="button" onClick={openSettings}>Paramètres</button> : null}
+            {canManageBeds ? <button className={`tab-btn ${screen === 'beds' ? 'active' : ''}`} type="button" onClick={() => setScreen('beds')}>{tr(locale, 'Lits', 'Beds', 'الأسرة')}</button> : null}
+            {canManagePatients ? <button className={`tab-btn ${screen === 'patients' ? 'active' : ''}`} type="button" onClick={() => setScreen('patients')}>{tr(locale, 'Patients', 'Patients', 'المرضى')}</button> : null}
+            {authenticated && isAdmin ? <button className={`tab-btn ${screen === 'stats' ? 'active' : ''}`} type="button" onClick={() => setScreen('stats')}>{tr(locale, 'Statistiques', 'Statistics', 'الإحصاءات')}</button> : null}
+            {authenticated ? <button className={`tab-btn ${screen === 'account' ? 'active' : ''}`} type="button" onClick={openAccount}>{tr(locale, 'Mon compte', 'My account', 'حسابي')}</button> : null}
+            {authenticated && isAdmin ? <button className={`tab-btn ${screen === 'settings' ? 'active' : ''}`} type="button" onClick={openSettings}>{tr(locale, 'Parametres', 'Settings', 'الإعدادات')}</button> : null}
           </div>
 
           {screen === 'beds' && canManageBeds ? (
@@ -822,53 +1082,64 @@ function App() {
               <div className="controls-grid">
                 {isAdmin ? (
                   <div className="form-card">
-                    <h2>Ajouter un lit</h2>
+                    <h2>{tr(locale, 'Ajouter un lit', 'Add bed', 'إضافة سرير')}</h2>
                     <div className="form-grid">
                       <label>
-                        Numéro
+                        {tr(locale, 'Numero', 'Number', 'الرقم')}
                         <input className="form-control" value={newBed.number} type="number" min="1" onChange={(event) => setNewBed((current) => ({ ...current, number: event.target.value }))} />
                       </label>
                       <label>
-                        Nom
+                        {tr(locale, 'Nom', 'Name', 'الاسم')}
                         <input className="form-control" value={newBed.name} type="text" onChange={(event) => setNewBed((current) => ({ ...current, name: event.target.value }))} />
                       </label>
                       <label>
-                        Nom (autre langue)
-                        <input className="form-control" value={newBed.nameAlt} type="text" onChange={(event) => setNewBed((current) => ({ ...current, nameAlt: event.target.value }))} />
-                      </label>
-                      <label>
-                        Chambre
+                        {tr(locale, 'Chambre', 'Room', 'الغرفة')}
                         <input className="form-control" value={newBed.room} type="text" onChange={(event) => setNewBed((current) => ({ ...current, room: event.target.value }))} />
                       </label>
                       <label>
-                        Chambre (autre langue)
-                        <input className="form-control" value={newBed.roomAlt} type="text" onChange={(event) => setNewBed((current) => ({ ...current, roomAlt: event.target.value }))} />
-                      </label>
-                      <label>
-                        Type
+                        {tr(locale, 'Type', 'Type', 'النوع')}
                         <select className="form-select" value={newBed.type} onChange={(event) => setNewBed((current) => ({ ...current, type: event.target.value }))}>
                           <option value="standard">Standard</option>
-                          <option value="thoracique">Thoracique</option>
+                          <option value="thoracique">{tr(locale, 'Thoracique', 'Thoracic', 'صدري')}</option>
                         </select>
                       </label>
-                      <button className="btn primary" type="button" onClick={createBed}>Créer</button>
+                      <button className="btn primary" type="button" onClick={createBed}>{tr(locale, 'Creer', 'Create', 'إنشاء')}</button>
                     </div>
                   </div>
                 ) : (
                   <div className="form-card">
-                    <h2>Actions rapides</h2>
-                    <p className="small-note">Les utilisateurs authentifiés peuvent modifier l’état des lits et gérer les patients. La création et la suppression de lits sont réservées à l’admin.</p>
+                    <h2>{tr(locale, 'Actions rapides', 'Quick actions', 'إجراءات سريعة')}</h2>
+                    <p className="small-note">{tr(locale, "Les utilisateurs authentifies peuvent modifier l'etat des lits et gerer les patients. La creation et la suppression de lits sont reservees a l admin.", 'Authenticated users can update bed status and manage patients. Bed create/delete is admin-only.', 'يمكن للمستخدمين الموثقين تعديل حالة الأسرة وإدارة المرضى. إنشاء/حذف الأسرة للمدير فقط.')}</p>
                   </div>
                 )}
                 <div className="form-card">
-                  <h2>Actions rapides</h2>
-                  <p className="small-note">Les changements se synchronisent automatiquement sur les postes connectés.</p>
+                  <h2>{tr(locale, 'Actions rapides', 'Quick actions', 'إجراءات سريعة')}</h2>
+                  <p className="small-note">{tr(locale, 'Les changements se synchronisent automatiquement sur les postes connectes.', 'Changes sync automatically across connected stations.', 'تتم مزامنة التغييرات تلقائيًا عبر المحطات المتصلة.')}</p>
                 </div>
+                {canCustomizePatientTypeVisibility ? (
+                  <div className="form-card">
+                    <h2>{tr(locale, 'Types visibles (affectation)', 'Visible types (assignment)', 'الأنواع الظاهرة (التخصيص)')}</h2>
+                    <p className="small-note">{tr(locale, "Choisissez les types de patients affiches pour votre utilisateur dans l'affectation Beds et la rubrique Patients.", 'Choose patient types visible for your user in bed assignment and patients tab.', 'اختر أنواع المرضى الظاهرة لمستخدمك في تخصيص الأسرة وقسم المرضى.')}</p>
+                    <div className="patient-priority-row" style={{ marginTop: 8 }}>
+                      {patientTypeSelectableOptions.map((option) => (
+                        <label key={option} className="patient-priority-chip" style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                          <input
+                            type="checkbox"
+                            checked={visiblePatientTypes.includes(option)}
+                            onChange={() => toggleVisiblePatientType(option)}
+                          />
+                          {patientTypeLabel(locale, option)}
+                        </label>
+                      ))}
+                    </div>
+                    <p className="small-note">{tr(locale, 'Patients visibles maintenant', 'Visible patients now', 'المرضى الظاهرون الآن')}: {visiblePatients.length} / {activePatients.length}</p>
+                  </div>
+                ) : null}
               </div>
               <div className="grid">
                 <BedsGrid
                   beds={beds}
-                  statusMeta={statusMeta}
+                  statusMeta={localizedStatusMeta}
                   normalizeStatus={normalizeStatus}
                   escapeText={escapeText}
                   canManageBeds={canManageBeds}
@@ -876,6 +1147,7 @@ function App() {
                   assignByBed={assignByBed}
                   setAssignByBed={setAssignByBed}
                   activePatients={activePatients}
+                  assignablePatients={visiblePatients}
                   bedEdits={bedEdits}
                   setBedEdits={setBedEdits}
                   api={api}
@@ -883,9 +1155,10 @@ function App() {
                   showSuccess={showSuccess}
                   readErrorMessage={readErrorMessage}
                   setConfirm={setConfirm}
+                  locale={locale}
                 />
               </div>
-              <div className="foot">Liaison réseau en attente.</div>
+              <div className="foot">{connectionState}</div>
             </div>
           ) : null}
 
@@ -894,29 +1167,64 @@ function App() {
               <div className="patients-header-grid">
                 <div className="form-card patient-command-card">
                   <div className="patient-command-head">
-                    <h2>Poste de commande patients</h2>
-                    <p className="small-note">Saisie prioritaire pour l'ajout, le triage et l'assignation.</p>
+                    <h2>{tr(locale, 'Poste de commande patients', 'Patient command desk', 'وحدة أوامر المرضى')}</h2>
+                    <p className="small-note">{tr(locale, "Saisie prioritaire pour l'ajout, le triage et l'assignation.", 'Priority workflow for registration, triage, and assignment.', 'تدفق أولوية للتسجيل والفرز والتخصيص.')}</p>
                   </div>
                   <div className="patient-priority-row">
-                    <span className="patient-priority-chip">Actifs: {activePatients.length}</span>
-                    <span className="patient-priority-chip warn">Non assignes: {activePatients.filter((patient) => !patient.bedNumber).length}</span>
-                    <span className="patient-priority-chip danger">Triage critique: {activePatients.filter((patient) => triageLevelOf(patient) >= 3).length}</span>
+                    <span className="patient-priority-chip">{tr(locale, 'Affiches', 'Displayed', 'المعروض')}: {filteredPatients.length} / {visiblePatients.length}</span>
+                    <span className="patient-priority-chip warn">{tr(locale, 'Non assignes', 'Unassigned', 'غير مخصصين')}: {filteredPatients.filter((patient) => !patient.bedNumber).length}</span>
+                    <span className="patient-priority-chip danger">{tr(locale, 'Triage critique', 'Critical triage', 'فرز حرج')}: {filteredPatients.filter((patient) => triageLevelOf(patient) >= 3).length}</span>
                   </div>
+                  {canCustomizePatientTypeVisibility ? (
+                    <div className="patient-priority-row" style={{ marginTop: 8 }}>
+                      {patientTypeSelectableOptions.map((option) => (
+                        <label key={option} className="patient-priority-chip" style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                          <input
+                            type="checkbox"
+                            checked={visiblePatientTypes.includes(option)}
+                            onChange={() => toggleVisiblePatientType(option)}
+                          />
+                          {patientTypeLabel(locale, option)}
+                        </label>
+                      ))}
+                    </div>
+                  ) : null}
+                  {canCustomizePatientTypeVisibility ? (
+                    <div className="form-grid compact">
+                      <label>
+                        {tr(locale, 'Filtre type patient', 'Patient type filter', 'تصفية نوع المريض')}
+                        <select className="form-select" value={patientTypeFilter} onChange={(event) => setPatientTypeFilter(event.target.value)}>
+                          {patientTypeOptions.map((option) => (
+                            <option key={option} value={option}>{option === 'all' ? tr(locale, 'Tous', 'All', 'الكل') : patientTypeLabel(locale, option)}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  ) : null}
                   <div className="form-grid patient-command-grid">
                     <label>
-                      Numero
+                      {tr(locale, 'Numero', 'Number', 'الرقم')}
                       <input className="form-control" value={newPatient.registrationNumber} type="text" onChange={(event) => setNewPatient((current) => ({ ...current, registrationNumber: event.target.value }))} />
                     </label>
                     <label>
-                      Nom
+                      {tr(locale, 'Nom', 'Name', 'الاسم')}
                       <input className="form-control" value={newPatient.name} type="text" onChange={(event) => setNewPatient((current) => ({ ...current, name: event.target.value }))} />
                     </label>
                     <label>
-                      Lit
+                      {tr(locale, 'Type patient', 'Patient type', 'نوع المريض')}
+                      <select className="form-select" value={newPatient.patientType} onChange={(event) => setNewPatient((current) => ({ ...current, patientType: event.target.value }))}>
+                        <option value="traumato">{patientTypeLabel(locale, 'traumato')}</option>
+                        <option value="medical">{patientTypeLabel(locale, 'medical')}</option>
+                        <option value="douleurs_thoracique">{patientTypeLabel(locale, 'douleurs_thoracique')}</option>
+                        <option value="chirurgical">{patientTypeLabel(locale, 'chirurgical')}</option>
+                      </select>
+                    </label>
+                    <label>
+                      {tr(locale, 'Lit', 'Bed', 'السرير')}
                       <input className="form-control" value={newPatient.bedNumber} type="number" min="1" disabled={isTriage} onChange={(event) => setNewPatient((current) => ({ ...current, bedNumber: event.target.value }))} />
                     </label>
                     <label>
-                      Score triage (0-4)
+                      {tr(locale, 'Score triage (0-4)', 'Triage score (0-4)', 'درجة الفرز (0-4)')}
                       <select className="form-select" value={newPatient.triageScore} onChange={(event) => setNewPatient((current) => ({ ...current, triageScore: event.target.value }))}>
                         <option value="0">0</option>
                         <option value="1">1</option>
@@ -925,17 +1233,17 @@ function App() {
                         <option value="4">4</option>
                       </select>
                     </label>
-                    <button className="btn primary" type="button" onClick={savePatient}>Enregistrer patient</button>
+                    <button className="btn primary" type="button" onClick={savePatient}>{tr(locale, 'Enregistrer patient', 'Save patient', 'حفظ المريض')}</button>
                   </div>
-                  {isTriage ? <p className="small-note">Le profil triage enregistre uniquement des patients non assignes.</p> : null}
+                  {isTriage ? <p className="small-note">{tr(locale, 'Le profil triage enregistre uniquement des patients non assignes.', 'Triage role only registers unassigned patients.', 'دور الفرز يسجل المرضى غير المخصصين فقط.')}</p> : null}
                 </div>
                 <div className="form-card">
-                  <h2>Actions critiques</h2>
-                  <p className="small-note">Prioriser les patients avec triage 3-4 puis traiter les non assignes.</p>
+                  <h2>{tr(locale, 'Actions critiques', 'Critical actions', 'إجراءات حرجة')}</h2>
+                  <p className="small-note">{tr(locale, 'Prioriser les patients avec triage 3-4 puis traiter les non assignes.', 'Prioritize triage level 3-4, then handle unassigned patients.', 'أعطِ أولوية لفرز 3-4 ثم عالج غير المخصصين.')}</p>
                   <div className="patient-legend">
-                    <span className="patient-legend-item"><span className="legend-dot triage-critical-dot" /> Triage eleve</span>
-                    <span className="patient-legend-item"><span className="legend-dot triage-medium-dot" /> Triage modere</span>
-                    <span className="patient-legend-item"><span className="legend-dot triage-low-dot" /> Triage bas</span>
+                    <span className="patient-legend-item"><span className="legend-dot triage-critical-dot" /> {tr(locale, 'Triage eleve', 'High triage', 'فرز مرتفع')}</span>
+                    <span className="patient-legend-item"><span className="legend-dot triage-medium-dot" /> {tr(locale, 'Triage modere', 'Medium triage', 'فرز متوسط')}</span>
+                    <span className="patient-legend-item"><span className="legend-dot triage-low-dot" /> {tr(locale, 'Triage bas', 'Low triage', 'فرز منخفض')}</span>
                   </div>
                 </div>
               </div>
@@ -943,17 +1251,19 @@ function App() {
                 <table className="table table-sm align-middle mb-0 patients-table">
                   <thead>
                     <tr>
-                      <th>Numéro d'inscription</th>
-                      <th>Nom</th>
-                      <th>Triage</th>
-                      <th>Chambre / Lit</th>
-                      <th>Actions</th>
+                      <th>{tr(locale, 'Numero inscription', 'Registration number', 'رقم التسجيل')}</th>
+                      <th>{tr(locale, 'Nom', 'Name', 'الاسم')}</th>
+                      {canViewPatientType ? <th>{tr(locale, 'Type', 'Type', 'النوع')}</th> : null}
+                      <th>{tr(locale, 'Triage', 'Triage', 'الفرز')}</th>
+                      <th>{tr(locale, 'Chambre / Lit', 'Room / Bed', 'الغرفة / السرير')}</th>
+                      <th>{tr(locale, 'Actions', 'Actions', 'الإجراءات')}</th>
                     </tr>
                   </thead>
                   <tbody>
                     <PatientsRows
-                      activePatients={activePatients}
+                      activePatients={filteredPatients}
                       canViewTriage={canViewTriage}
+                      canViewPatientType={canViewPatientType}
                       authenticated={authenticated}
                       canManageBeds={canManageBeds}
                       canArchivePatients={canArchivePatients}
@@ -965,8 +1275,8 @@ function App() {
                       showSuccess={showSuccess}
                       readErrorMessage={readErrorMessage}
                       setPatients={setPatients}
-                      speakPatientCall={speakPatientCall}
                       escapeText={escapeText}
+                      locale={locale}
                     />
                   </tbody>
                 </table>
@@ -985,7 +1295,7 @@ function App() {
           ) : null}
 
           {screen === 'stats' && authenticated && isAdmin ? (
-            <StatsScreen stats={stats} />
+            <StatsScreen stats={stats} locale={locale} />
           ) : null}
 
           {screen === 'account' && authenticated ? (
@@ -994,6 +1304,7 @@ function App() {
               setPasswordForm={setPasswordForm}
               changeOwnPassword={changeOwnPassword}
               user={user}
+              locale={locale}
             />
           ) : null}
 
@@ -1011,8 +1322,16 @@ function App() {
               gotifyForm={gotifyForm}
               setGotifyForm={setGotifyForm}
               saveGotifySettings={saveGotifySettings}
+              testGotifySettings={testGotifySettings}
+              securityConfigForm={securityConfigForm}
+              setSecurityConfigForm={setSecurityConfigForm}
+              saveSecurityConfig={saveSecurityConfig}
               securityHealth={securityHealth}
               refreshSecurityHealth={refreshSecurityHealth}
+              uiConfigForm={uiConfigForm}
+              setUiConfigForm={setUiConfigForm}
+              saveUiConfig={saveUiConfig}
+              locale={locale}
               renderUsers={renderUsers}
               auditLogs={auditLogs}
               escapeText={escapeText}
@@ -1021,35 +1340,13 @@ function App() {
         </div>
       </div>
 
-      {modalOpen ? (
-      <div className="modal-backdrop open" role="dialog" aria-modal="true">
-        <div className="modal section-card">
-          <h2>Connexion</h2>
-          <p className="small-note">{authMessage}</p>
-          <div className="modal-grid">
-            <label>
-              Identifiant
-              <input className="form-control" value={authForm.username} type="text" onChange={(event) => setAuthForm((current) => ({ ...current, username: event.target.value }))} />
-            </label>
-            <label>
-              Mot de passe
-              <input className="form-control" value={authForm.password} type="password" onChange={(event) => setAuthForm((current) => ({ ...current, password: event.target.value }))} />
-            </label>
-          </div>
-          <div className="modal-actions">
-            <button className="btn" type="button" onClick={() => setModalOpen(false)}>Fermer</button>
-            <button className="btn primary" type="button" onClick={authenticate}>Valider</button>
-          </div>
-        </div>
-      </div>
-      ) : null}
-
       {confirm.open ? (
       <SimpleModal
         title={confirm.title}
         text={confirm.message}
         onCancel={closeConfirm}
         onConfirm={handleConfirmAction}
+        locale={locale}
       />
       ) : null}
     </div>
