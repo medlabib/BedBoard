@@ -17,7 +17,7 @@ describe('PatientsRows', () => {
             activePatients={[
               {
                 registrationNumber: 'P-001',
-                name: 'Alice',
+                name: 'PATIENT-001',
                 patientType: 'medical',
                 triageScore: 4,
                 status: 'triaged',

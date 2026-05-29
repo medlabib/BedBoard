@@ -9,15 +9,15 @@ import (
 )
 
 func TestBuildAlertPayloads(t *testing.T) {
-	bedPayload := buildBedAlertPayload(Bed{Number: 8, Room: "A", Name: "Bed A", PatientName: "John"}, "nurse")
+	bedPayload := buildBedAlertPayload(Bed{Number: 8, Room: "A", Name: "Bed A", PatientName: "TEST_PATIENT"}, "nurse")
 	if bedPayload.Reason != "bed_alert" {
 		t.Fatalf("expected bed alert reason")
 	}
-	if bedPayload.Patient != "John" {
+	if bedPayload.Patient != "TEST_PATIENT" {
 		t.Fatalf("expected patient name in bed payload")
 	}
 
-	triagePayload := buildTriageAlertPayload(Patient{Name: "Alice", RegistrationNumber: "R-1"}, nil, "triage")
+	triagePayload := buildTriageAlertPayload(Patient{Name: "TEST_USER", RegistrationNumber: "TEST-1"}, nil, "triage")
 	if triagePayload.Reason != "triage_max" {
 		t.Fatalf("expected triage_max reason")
 	}

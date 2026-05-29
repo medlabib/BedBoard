@@ -253,7 +253,7 @@ export default function SettingsScreen({
               </label>
               <label>
                 {tr(locale, 'Proxy URL (http://ip:port)', 'Proxy URL (http://ip:port)', 'رابط الوكيل (http://ip:port)')}
-                <input className="form-control" value={securityConfigForm.proxyUrl} type="text" placeholder="http://10.0.0.10:8080" onChange={(event) => setSecurityConfigForm((current) => ({ ...current, proxyUrl: event.target.value }))} />
+                <input className="form-control" value={securityConfigForm.proxyUrl} type="text" placeholder="http://proxy.example.com:8080" onChange={(event) => setSecurityConfigForm((current) => ({ ...current, proxyUrl: event.target.value }))} />
               </label>
               <label>
                 {tr(locale, 'Utilisateur proxy', 'Proxy username', 'اسم مستخدم الوكيل')}

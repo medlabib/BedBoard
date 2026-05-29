@@ -19,13 +19,13 @@ func TestPatientAssignReleaseLifecycle(t *testing.T) {
 
 	patient, err := app.upsertAndAssignPatient(patientRequest{
 		RegistrationNumber: "REG-100",
-		Name:               "Alice",
+		Name:               "PATIENT-A",
 		PatientType:        patientTypeMedical,
 		TriageScore:        intPtr(4),
 		BedNumber:          1,
-		Reason:             "douleur thoracique",
-		Destination:        "UHCD",
-		Outcome:            "observation",
+		Reason:             "test_reason",
+		Destination:        "test_destination",
+		Outcome:            "test_outcome",
 	}, "admin")
 	if err != nil {
 		t.Fatalf("upsertAndAssignPatient: %v", err)
@@ -82,7 +82,7 @@ func TestCollectStateIncludesSLAAndOperationalMetrics(t *testing.T) {
 	arrivedOld := time.Now().Add(-30 * time.Minute)
 	if err := app.db.Create(&Patient{
 		RegistrationNumber: "REG-SLA",
-		Name:               "Critical",
+		Name:               "PATIENT-SLA",
 		PatientType:        patientTypeMedical,
 		TriageScore:        4,
 		Status:             patientStatusTriaged,
@@ -116,8 +116,8 @@ func TestHandlePatientsImportCreatesPatientsAndEvents(t *testing.T) {
 	req := newAuthedJSONRequest(t, http.MethodPost, "/api/admin/integrations/patients/import", token, map[string]any{
 		"source": "sih",
 		"patients": []map[string]any{
-			{"registrationNumber": "IMP-1", "name": "Patient One", "patientType": patientTypeMedical, "triageScore": 2},
-			{"registrationNumber": "IMP-2", "name": "Patient Two", "patientType": patientTypeTraumato, "triageScore": 3},
+			{"registrationNumber": "IMP-1", "name": "PATIENT-IMPORT-1", "patientType": patientTypeMedical, "triageScore": 2},
+			{"registrationNumber": "IMP-2", "name": "PATIENT-IMPORT-2", "patientType": patientTypeTraumato, "triageScore": 3},
 		},
 	})
 

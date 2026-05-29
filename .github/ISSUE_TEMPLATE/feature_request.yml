@@ -1,0 +1,43 @@
+name: Feature request
+description: Propose a useful enhancement
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Suggest a feature with clinical value and clear outcome.
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      placeholder: Add webhook integration for critical triage alerts
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / need
+      description: What problem does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe expected behavior and UX/API impact
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - low
+        - medium
+        - high
+    validations:
+      required: true

@@ -28,6 +28,14 @@ BedBoard is a standalone management system for emergency departments, with role-
 | scripts/ | Utility scripts for local/CI asset synchronization |
 | tools/ | Developer utilities (for example, icon generation) |
 
+## Community and Governance
+
+- Contribution guide: CONTRIBUTING.md
+- Code of conduct: CODE_OF_CONDUCT.md
+- Issue templates: .github/ISSUE_TEMPLATE/
+
+When reporting bugs or requesting features, use the provided GitHub templates for faster triage.
+
 ## Technology Stack
 
 | Component | Technology |

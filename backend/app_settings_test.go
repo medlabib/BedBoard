@@ -40,7 +40,7 @@ func TestValidateProxyURL(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "empty is accepted", url: "", wantErr: false},
-		{name: "valid http", url: "http://10.0.0.2:8080", wantErr: false},
+		{name: "valid http", url: "http://proxy.example.com:8080", wantErr: false},
 		{name: "valid https", url: "https://proxy.example.com:8443", wantErr: false},
 		{name: "invalid scheme", url: "socks5://proxy.example.com:1080", wantErr: true},
 		{name: "missing host", url: "http:///", wantErr: true},
@@ -73,7 +73,7 @@ func TestHandleSecurityConfigPersistsTriageSLA(t *testing.T) {
 		"hstsPreload":            false,
 		"triageSlaMinutes":       20,
 		"proxyEnabled":           true,
-		"proxyUrl":               "http://10.0.0.2:8080",
+		"proxyUrl":               "http://proxy.example.com:8080",
 		"proxyUsername":          "proxy-user",
 		"proxyPassword":          "proxy-pass",
 		"clearAdminInitPassword": false,
@@ -104,7 +104,7 @@ func TestHandleSecurityConfigPersistsTriageSLA(t *testing.T) {
 	if !view.ProxyEnabled {
 		t.Fatalf("expected proxy enabled")
 	}
-	if view.ProxyURL != "http://10.0.0.2:8080" {
+	if view.ProxyURL != "http://proxy.example.com:8080" {
 		t.Fatalf("expected proxy url to persist, got %q", view.ProxyURL)
 	}
 	if view.ProxyUsername != "proxy-user" {
