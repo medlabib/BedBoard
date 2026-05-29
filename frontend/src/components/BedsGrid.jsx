@@ -31,11 +31,13 @@ export default function BedsGrid({
     const hasPatientInfo = Boolean(bed.patientName || bed.patientRegistration || bed.hasPatient);
     const assignedPatient = activePatients.find((patient) => Number(patient.bedNumber) === Number(bed.number))
       || activePatients.find((patient) => patient.registrationNumber === bed.patientRegistration);
-    const assignedType = patientTypeLabel(assignedPatient?.patientType);
+    const assignedType = patientTypeLabel(locale, assignedPatient?.patientType);
     const triageLevel = triageLevelOf(assignedPatient);
     const triage = triageMeta[triageLevel] || triageMeta[0];
+    const displayPatientName = String(bed.patientName || assignedPatient?.name || '').trim();
+    const displayPatientReg = String(bed.patientRegistration || assignedPatient?.registrationNumber || '').trim();
     const patientLine = hasPatientInfo
-      ? `${escapeText(bed.patientName || tr(locale, 'Patient affecte', 'Assigned patient', 'مريض مخصص'))}${bed.patientRegistration ? ` (${escapeText(bed.patientRegistration)})` : ''}${assignedType ? ` - ${assignedType}` : ''}`
+      ? `${escapeText(displayPatientName || displayPatientReg || tr(locale, 'Patient affecte', 'Assigned patient', 'مريض مخصص'))}${displayPatientName && displayPatientReg ? ` (${escapeText(displayPatientReg)})` : ''}${assignedType !== '-' ? ` - ${assignedType}` : ''}`
       : (statusKey === 'occupé' ? tr(locale, 'Patient affecte', 'Assigned patient', 'مريض مخصص') : tr(locale, 'Aucun patient affecte', 'No patient assigned', 'لا يوجد مريض مخصص'));
 
     return (
@@ -115,7 +117,10 @@ export default function BedsGrid({
                 <option value="">{tr(locale, 'Affecter un patient', 'Assign a patient', 'تخصيص مريض')}</option>
                 {(Array.isArray(assignablePatients) ? assignablePatients : activePatients).filter((p) => !p.bedNumber).map((p) => (
                   <option key={p.registrationNumber} value={p.registrationNumber}>
-                    {p.registrationNumber}{patientTypeLabel(p.patientType) ? ` - ${patientTypeLabel(p.patientType)}` : ''}
+                    {p.registrationNumber}
+                    {` [${patientTypeLabel(locale, p.patientType)}]`}
+                    {` [${tr(locale, 'Triage', 'Triage', 'الفرز')} ${triageLevelOf(p)}]`}
+                    {p.status ? ` [${String(p.status)}]` : ''}
                   </option>
                 ))}
               </select>

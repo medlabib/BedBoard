@@ -38,7 +38,7 @@ const statusMeta = {
   alerte: { color: '#d97a70', soft: 'rgba(217, 122, 112, 0.18)' },
 };
 
-const patientTypeOptions = ['all', 'traumato', 'medical', 'douleurs_thoracique', 'chirurgical'];
+const patientTypeOptions = ['all', 'traumato', 'medical', 'douleurs_thoracique', 'chirurgical', 'urgences_differees'];
 
 const patientTypeSelectableOptions = patientTypeOptions.filter((option) => option !== 'all');
 
@@ -61,13 +61,14 @@ function normalizePatientTypeValue(value) {
   if (key === 'traumato') return 'traumato';
   if (key === 'chirurgical') return 'chirurgical';
   if (key === 'douleurs_thoracique' || key === 'douleurs thoracique') return 'douleurs_thoracique';
+  if (key === 'urgences_differees' || key === 'urgences differees' || key === 'urgence differee') return 'urgences_differees';
   return 'medical';
 }
 
 function loadPatientTypeFilter() {
   try {
     const raw = localStorage.getItem('bedboard_patient_type_filter');
-    const allowed = new Set(['all', 'traumato', 'medical', 'douleurs_thoracique', 'chirurgical']);
+    const allowed = new Set(['all', 'traumato', 'medical', 'douleurs_thoracique', 'chirurgical', 'urgences_differees']);
     if (allowed.has(raw)) return raw;
   } catch (error) {
     console.error(error);
@@ -990,9 +991,14 @@ function App() {
   const patientPanel = useMemo(() => {
     const current = currentPatient;
     if (!current) return <div className="empty">{tr(locale, 'Aucun patient.', 'No patient.', 'لا يوجد مريض.')}</div>;
+    const currentName = String(current.name || '').trim();
+    const currentReg = String(current.registrationNumber || '').trim();
+    const identity = currentName && currentReg
+      ? `${currentName} (${currentReg})`
+      : (currentName || currentReg || tr(locale, 'Patient sans identifiant', 'Patient without identifier', 'مريض بدون معرف'));
     return (
       <div className="patient-center">
-        <div className="patient-line">{tr(locale, 'Patient', 'Patient', 'المريض')} {escapeText(current.registrationNumber)} - {current.bedNumber ? `${escapeText(current.roomName || tr(locale, 'Chambre', 'Room', 'غرفة'))} - ${escapeText(current.bedName || `${tr(locale, 'Lit', 'Bed', 'سرير')} ${current.bedNumber}`)}` : tr(locale, 'Non assigne', 'Unassigned', 'غير مخصص')}</div>
+        <div className="patient-line">{tr(locale, 'Patient', 'Patient', 'المريض')} {escapeText(identity)} - {current.bedNumber ? `${escapeText(current.roomName || tr(locale, 'Chambre', 'Room', 'غرفة'))} - ${escapeText(current.bedName || `${tr(locale, 'Lit', 'Bed', 'سرير')} ${current.bedNumber}`)}` : tr(locale, 'Non assigne', 'Unassigned', 'غير مخصص')}</div>
       </div>
     );
   }, [currentPatient, locale]);
@@ -1287,6 +1293,7 @@ function App() {
                         <option value="medical">{patientTypeLabel(locale, 'medical')}</option>
                         <option value="douleurs_thoracique">{patientTypeLabel(locale, 'douleurs_thoracique')}</option>
                         <option value="chirurgical">{patientTypeLabel(locale, 'chirurgical')}</option>
+                        <option value="urgences_differees">{patientTypeLabel(locale, 'urgences_differees')}</option>
                       </select>
                     </label>
                     <label>

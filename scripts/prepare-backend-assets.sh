@@ -11,6 +11,5 @@ fi
 mkdir -p "$ROOT_DIR/backend/frontend"
 rm -rf "$ROOT_DIR/backend/frontend/dist"
 cp -R "$ROOT_DIR/frontend/dist" "$ROOT_DIR/backend/frontend/"
-cp "$ROOT_DIR/logo.svg" "$ROOT_DIR/backend/logo.svg"
 
 echo "Backend embedded assets synchronized."

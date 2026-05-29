@@ -891,7 +891,7 @@ func (a *App) handlePatients(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if strings.TrimSpace(req.PatientType) != "" && normalizePatientType(req.PatientType) == "" {
-			http.Error(w, "patient type must be one of: traumato, medical, douleurs thoracique, chirurgical", http.StatusBadRequest)
+			http.Error(w, "patient type must be one of: traumato, medical, douleurs thoracique, chirurgical, urgences differees", http.StatusBadRequest)
 			return
 		}
 		user, _ := a.currentUser(r)

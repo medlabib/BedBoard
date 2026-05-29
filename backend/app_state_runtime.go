@@ -532,6 +532,8 @@ func normalizePatientType(value string) string {
 		return patientTypeChestPain
 	case patientTypeSurgical, "surgical":
 		return patientTypeSurgical
+	case patientTypeDeferredEmergency, "urgences differees", "urgence differee", "deferred_emergency", "deferred_emergencies":
+		return patientTypeDeferredEmergency
 	default:
 		return ""
 	}

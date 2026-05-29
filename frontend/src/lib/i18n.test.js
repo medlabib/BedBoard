@@ -15,6 +15,7 @@ describe('i18n and role helpers', () => {
 
   it('maps labels and triage level safely', () => {
     expect(patientTypeLabel('en', 'medical')).toBe('Medical');
+    expect(patientTypeLabel('en', 'urgences_differees')).toBe('Deferred emergencies');
     expect(roleLabel('en', 'dechocage')).toBe('Resuscitation');
     expect(triageLabel('en', 4)).toBe('Level 4');
     expect(normalizeRole(' TRIAGE ')).toBe('triage');

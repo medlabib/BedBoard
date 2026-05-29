@@ -1,4 +1,4 @@
-import { tr } from '../lib/i18n';
+import { patientTypeLabel, tr } from '../lib/i18n';
 
 export default function StatsScreen({ stats, locale }) {
   const statusEntries = Object.entries(stats.patientsByStatus || {});
@@ -97,7 +97,7 @@ export default function StatsScreen({ stats, locale }) {
                 </thead>
                 <tbody>
                   {typeEntries.length ? typeEntries.map(([key, value]) => (
-                    <tr key={key}><td>{key}</td><td>{value}</td></tr>
+                    <tr key={key}><td>{patientTypeLabel(locale, key)}</td><td>{value}</td></tr>
                   )) : (
                     <tr><td colSpan="2"><div className="empty">{tr(locale, 'Aucun type disponible.', 'No type data.', 'لا توجد بيانات نوع.')}</div></td></tr>
                   )}

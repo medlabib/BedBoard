@@ -43,6 +43,7 @@ const (
 	patientTypeMedical               = "medical"
 	patientTypeChestPain             = "douleurs_thoracique"
 	patientTypeSurgical              = "chirurgical"
+	patientTypeDeferredEmergency     = "urgences_differees"
 	patientStatusArrived             = "arrived"
 	patientStatusTriaged             = "triaged"
 	patientStatusWaiting             = "waiting"

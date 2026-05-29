@@ -29,6 +29,8 @@ export function patientTypeLabel(locale, value) {
       return tr(locale, 'Douleurs thoracique', 'Chest pain', 'ألم صدري');
     case 'chirurgical':
       return tr(locale, 'Chirurgical', 'Surgical', 'جراحي');
+    case 'urgences_differees':
+      return tr(locale, 'Urgences differees', 'Deferred emergencies', 'حالات طارئة مؤجلة');
     default:
       return '-';
   }

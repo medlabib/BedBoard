@@ -31,6 +31,6 @@ describe('StatsScreen', () => {
     expect(screen.getByText('Patients by type')).toBeInTheDocument();
     expect(screen.getByText('14:00')).toBeInTheDocument();
     expect(screen.getByText('triaged')).toBeInTheDocument();
-    expect(screen.getByText('medical')).toBeInTheDocument();
+    expect(screen.getByText('Medical')).toBeInTheDocument();
   });
 });

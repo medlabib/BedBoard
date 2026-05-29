@@ -1,7 +1,10 @@
 node_modules/
 dist/
 frontend/dist/
-backend/frontend/dist/
+backend/frontend/dist/*
+!backend/frontend/
+!backend/frontend/dist/
+!backend/frontend/dist/index.html
 *.exe
 *.zip
 release/

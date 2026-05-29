@@ -25,6 +25,9 @@ func TestNormalizeHelpersAndFallbacks(t *testing.T) {
 	if got := normalizePatientType("chest_pain"); got != patientTypeChestPain {
 		t.Fatalf("normalizePatientType chest_pain: got %q", got)
 	}
+	if got := normalizePatientType("urgences differees"); got != patientTypeDeferredEmergency {
+		t.Fatalf("normalizePatientType urgences differees: got %q", got)
+	}
 	if got := normalizePatientType("unknown"); got != "" {
 		t.Fatalf("normalizePatientType unknown should be empty, got %q", got)
 	}

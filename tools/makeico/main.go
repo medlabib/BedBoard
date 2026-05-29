@@ -13,9 +13,9 @@ import (
 )
 
 func main() {
-	data, err := os.ReadFile("logo.svg")
+	data, err := os.ReadFile("backend/logo.svg")
 	if err != nil {
-		log.Fatalf("read logo.svg: %v", err)
+		log.Fatalf("read backend/logo.svg: %v", err)
 	}
 
 	icon, err := oksvg.ReadIconStream(bytes.NewReader(data))
