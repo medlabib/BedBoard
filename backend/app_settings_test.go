@@ -33,6 +33,32 @@ func TestValidateGotifyURL(t *testing.T) {
 	}
 }
 
+func TestValidateProxyURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr bool
+	}{
+		{name: "empty is accepted", url: "", wantErr: false},
+		{name: "valid http", url: "http://10.0.0.2:8080", wantErr: false},
+		{name: "valid https", url: "https://proxy.example.com:8443", wantErr: false},
+		{name: "invalid scheme", url: "socks5://proxy.example.com:1080", wantErr: true},
+		{name: "missing host", url: "http:///", wantErr: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateProxyURL(tc.url)
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected error for url %q", tc.url)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("did not expect error for url %q: %v", tc.url, err)
+			}
+		})
+	}
+}
+
 func TestHandleSecurityConfigPersistsTriageSLA(t *testing.T) {
 	app, cleanup := setupTestApp(t)
 	defer cleanup()
@@ -46,8 +72,13 @@ func TestHandleSecurityConfigPersistsTriageSLA(t *testing.T) {
 		"hstsIncludeSubdomains":  true,
 		"hstsPreload":            false,
 		"triageSlaMinutes":       20,
+		"proxyEnabled":           true,
+		"proxyUrl":               "http://10.0.0.2:8080",
+		"proxyUsername":          "proxy-user",
+		"proxyPassword":          "proxy-pass",
 		"clearAdminInitPassword": false,
 		"clearGotifyTokenEncKey": false,
+		"clearProxyPassword":     false,
 	}))
 	postReq.Header.Set("Content-Type", "application/json")
 	postRes := httptest.NewRecorder()
@@ -69,5 +100,17 @@ func TestHandleSecurityConfigPersistsTriageSLA(t *testing.T) {
 	}
 	if view.TriageSLAMinutes != 20 {
 		t.Fatalf("expected triage SLA 20, got %d", view.TriageSLAMinutes)
+	}
+	if !view.ProxyEnabled {
+		t.Fatalf("expected proxy enabled")
+	}
+	if view.ProxyURL != "http://10.0.0.2:8080" {
+		t.Fatalf("expected proxy url to persist, got %q", view.ProxyURL)
+	}
+	if view.ProxyUsername != "proxy-user" {
+		t.Fatalf("expected proxy username to persist, got %q", view.ProxyUsername)
+	}
+	if !view.ProxyPasswordConfigured {
+		t.Fatalf("expected proxy password configured")
 	}
 }

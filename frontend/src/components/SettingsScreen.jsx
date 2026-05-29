@@ -245,6 +245,32 @@ export default function SettingsScreen({
                 <input className="form-control" value={securityConfigForm.gotifyTokenEncKey} type="password" placeholder={securityConfigForm.gotifyTokenEncKeyConfigured ? tr(locale, 'Deja configure', 'Already configured', 'مضبوط مسبقًا') : tr(locale, 'Entrer cle base64', 'Enter base64 key', 'أدخل مفتاح base64')} onChange={(event) => setSecurityConfigForm((current) => ({ ...current, gotifyTokenEncKey: event.target.value }))} />
               </label>
               <label>
+                {tr(locale, 'Proxy sortant actif', 'Outbound proxy enabled', 'تفعيل الوكيل الخارجي')}
+                <select className="form-select" value={securityConfigForm.proxyEnabled ? '1' : '0'} onChange={(event) => setSecurityConfigForm((current) => ({ ...current, proxyEnabled: event.target.value === '1' }))}>
+                  <option value="0">{tr(locale, 'Non', 'No', 'لا')}</option>
+                  <option value="1">{tr(locale, 'Oui', 'Yes', 'نعم')}</option>
+                </select>
+              </label>
+              <label>
+                {tr(locale, 'Proxy URL (http://ip:port)', 'Proxy URL (http://ip:port)', 'رابط الوكيل (http://ip:port)')}
+                <input className="form-control" value={securityConfigForm.proxyUrl} type="text" placeholder="http://10.0.0.10:8080" onChange={(event) => setSecurityConfigForm((current) => ({ ...current, proxyUrl: event.target.value }))} />
+              </label>
+              <label>
+                {tr(locale, 'Utilisateur proxy', 'Proxy username', 'اسم مستخدم الوكيل')}
+                <input className="form-control" value={securityConfigForm.proxyUsername} type="text" onChange={(event) => setSecurityConfigForm((current) => ({ ...current, proxyUsername: event.target.value }))} />
+              </label>
+              <label>
+                {tr(locale, 'Mot de passe proxy', 'Proxy password', 'كلمة مرور الوكيل')}
+                <input className="form-control" value={securityConfigForm.proxyPassword} type="password" placeholder={securityConfigForm.proxyPasswordConfigured ? tr(locale, 'Deja configure', 'Already configured', 'مضبوط مسبقًا') : tr(locale, 'Entrer mot de passe proxy', 'Enter proxy password', 'أدخل كلمة مرور الوكيل')} onChange={(event) => setSecurityConfigForm((current) => ({ ...current, proxyPassword: event.target.value }))} />
+              </label>
+              <label>
+                {tr(locale, 'Reinitialiser mot de passe proxy', 'Reset proxy password', 'إعادة ضبط كلمة مرور الوكيل')}
+                <select className="form-select" value={securityConfigForm.clearProxyPassword ? '1' : '0'} onChange={(event) => setSecurityConfigForm((current) => ({ ...current, clearProxyPassword: event.target.value === '1' }))}>
+                  <option value="0">{tr(locale, 'Non', 'No', 'لا')}</option>
+                  <option value="1">{tr(locale, 'Oui', 'Yes', 'نعم')}</option>
+                </select>
+              </label>
+              <label>
                 {tr(locale, 'Reinitialiser GOTIFY_TOKEN_ENC_KEY', 'Reset GOTIFY_TOKEN_ENC_KEY', 'إعادة ضبط GOTIFY_TOKEN_ENC_KEY')}
                 <select className="form-select" value={securityConfigForm.clearGotifyTokenEncKey ? '1' : '0'} onChange={(event) => setSecurityConfigForm((current) => ({ ...current, clearGotifyTokenEncKey: event.target.value === '1' }))}>
                   <option value="0">{tr(locale, 'Non', 'No', 'لا')}</option>

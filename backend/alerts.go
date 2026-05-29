@@ -13,10 +13,14 @@ import (
 )
 
 type gotifyConfig struct {
-	Enabled  bool
-	URL      string
-	Token    string
-	Priority int
+	Enabled       bool
+	URL           string
+	Token         string
+	Priority      int
+	ProxyEnabled  bool
+	ProxyURL      string
+	ProxyUsername string
+	ProxyPassword string
 }
 
 type alertPayload struct {
@@ -129,6 +133,16 @@ func sendGotifyAlertPayload(payload alertPayload, config gotifyConfig) error {
 	req.Header.Set("X-Gotify-Key", token)
 
 	client := &http.Client{Timeout: 8 * time.Second}
+	if config.ProxyEnabled && strings.TrimSpace(config.ProxyURL) != "" {
+		proxyParsed, err := url.Parse(strings.TrimSpace(config.ProxyURL))
+		if err != nil {
+			return fmt.Errorf("proxy url parse failed: %w", err)
+		}
+		if strings.TrimSpace(config.ProxyUsername) != "" {
+			proxyParsed.User = url.UserPassword(strings.TrimSpace(config.ProxyUsername), strings.TrimSpace(config.ProxyPassword))
+		}
+		client.Transport = &http.Transport{Proxy: http.ProxyURL(proxyParsed)}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("gotify call failed: %w", err)

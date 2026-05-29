@@ -35,6 +35,10 @@ const (
 	settingHSTSPreload           = "security.hsts_preload"
 	settingGotifyTokenEncKey     = "security.gotify_token_enc_key"
 	settingTriageSLAMinutes      = "security.triage_sla_minutes"
+	settingProxyEnabled          = "security.proxy_enabled"
+	settingProxyURL              = "security.proxy_url"
+	settingProxyUsername         = "security.proxy_username"
+	settingProxyPassword         = "security.proxy_password"
 	encryptedSecretPrefix        = "enc:v1:"
 )
 
@@ -49,6 +53,10 @@ type securityConfigView struct {
 	HSTSPreload                 bool   `json:"hstsPreload"`
 	GotifyTokenEncKeyConfigured bool   `json:"gotifyTokenEncKeyConfigured"`
 	TriageSLAMinutes            int    `json:"triageSlaMinutes"`
+	ProxyEnabled                bool   `json:"proxyEnabled"`
+	ProxyURL                    string `json:"proxyUrl"`
+	ProxyUsername               string `json:"proxyUsername"`
+	ProxyPasswordConfigured     bool   `json:"proxyPasswordConfigured"`
 }
 
 type securityConfigRequest struct {
@@ -62,6 +70,11 @@ type securityConfigRequest struct {
 	HSTSPreload            bool   `json:"hstsPreload"`
 	GotifyTokenEncKey      string `json:"gotifyTokenEncKey"`
 	TriageSLAMinutes       int    `json:"triageSlaMinutes"`
+	ProxyEnabled           bool   `json:"proxyEnabled"`
+	ProxyURL               string `json:"proxyUrl"`
+	ProxyUsername          string `json:"proxyUsername"`
+	ProxyPassword          string `json:"proxyPassword"`
+	ClearProxyPassword     bool   `json:"clearProxyPassword"`
 	ClearAdminInitPassword bool   `json:"clearAdminInitPassword"`
 	ClearGotifyTokenEncKey bool   `json:"clearGotifyTokenEncKey"`
 }
@@ -110,6 +123,25 @@ func validateGotifyURL(raw string) error {
 	}
 	if strings.TrimSpace(parsed.Host) == "" {
 		return fmt.Errorf("gotify url host is required")
+	}
+	return nil
+}
+
+func validateProxyURL(raw string) error {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return fmt.Errorf("invalid proxy url")
+	}
+	scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("proxy url must use http or https")
+	}
+	if strings.TrimSpace(parsed.Host) == "" {
+		return fmt.Errorf("proxy url host is required")
 	}
 	return nil
 }
@@ -196,7 +228,25 @@ func (a *App) getGotifyConfig() gotifyConfig {
 		}
 		enabled = url != ""
 	}
-	return gotifyConfig{Enabled: enabled, URL: url, Token: token, Priority: priority}
+	proxyURL := strings.TrimSpace(a.getSettingValue(settingProxyURL))
+	proxyUsername := strings.TrimSpace(a.getSettingValue(settingProxyUsername))
+	proxyPasswordValue := strings.TrimSpace(a.getSettingValue(settingProxyPassword))
+	proxyPassword, err := a.decryptSecretValue(proxyPasswordValue)
+	if err != nil {
+		log.Printf("proxy password decrypt failed: %v", err)
+		proxyPassword = ""
+	}
+	proxyEnabled := a.getSettingBool(settingProxyEnabled, false)
+	return gotifyConfig{
+		Enabled:       enabled,
+		URL:           url,
+		Token:         token,
+		Priority:      priority,
+		ProxyEnabled:  proxyEnabled,
+		ProxyURL:      proxyURL,
+		ProxyUsername: proxyUsername,
+		ProxyPassword: proxyPassword,
+	}
 }
 
 func (a *App) handleGotifySettings(w http.ResponseWriter, r *http.Request) {
@@ -426,6 +476,9 @@ func (a *App) getSecurityConfigView() securityConfigView {
 	if encKey == "" {
 		encKey = strings.TrimSpace(os.Getenv("GOTIFY_TOKEN_ENC_KEY"))
 	}
+	proxyURL := strings.TrimSpace(a.getSettingValue(settingProxyURL))
+	proxyUsername := strings.TrimSpace(a.getSettingValue(settingProxyUsername))
+	proxyPassword := strings.TrimSpace(a.getSettingValue(settingProxyPassword))
 	return securityConfigView{
 		AdminInitUsername:           username,
 		AdminInitPasswordConfigured: adminPwd != "",
@@ -437,6 +490,10 @@ func (a *App) getSecurityConfigView() securityConfigView {
 		HSTSPreload:                 a.getSettingBool(settingHSTSPreload, envBool("HSTS_PRELOAD", false)),
 		GotifyTokenEncKeyConfigured: encKey != "",
 		TriageSLAMinutes:            a.getSettingInt(settingTriageSLAMinutes, envInt("TRIAGE_SLA_MINUTES", 15)),
+		ProxyEnabled:                a.getSettingBool(settingProxyEnabled, false),
+		ProxyURL:                    proxyURL,
+		ProxyUsername:               proxyUsername,
+		ProxyPasswordConfigured:     proxyPassword != "",
 	}
 }
 
@@ -465,6 +522,15 @@ func (a *App) handleSecurityConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.TriageSLAMinutes < 1 || req.TriageSLAMinutes > 240 {
 			http.Error(w, "triage SLA minutes must be 1..240", http.StatusBadRequest)
+			return
+		}
+		proxyURL := strings.TrimSpace(req.ProxyURL)
+		if req.ProxyEnabled && proxyURL == "" {
+			http.Error(w, "proxy url required when proxy is enabled", http.StatusBadRequest)
+			return
+		}
+		if err := validateProxyURL(proxyURL); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		if err := a.upsertSettingValue(settingAdminInitUsername, username); err != nil {
@@ -509,6 +575,34 @@ func (a *App) handleSecurityConfig(w http.ResponseWriter, r *http.Request) {
 		if err := a.upsertSettingValue(settingTriageSLAMinutes, strconv.Itoa(req.TriageSLAMinutes)); err != nil {
 			http.Error(w, "save failed", http.StatusInternalServerError)
 			return
+		}
+		if err := a.upsertSettingValue(settingProxyEnabled, strconv.FormatBool(req.ProxyEnabled)); err != nil {
+			http.Error(w, "save failed", http.StatusInternalServerError)
+			return
+		}
+		if err := a.upsertSettingValue(settingProxyURL, proxyURL); err != nil {
+			http.Error(w, "save failed", http.StatusInternalServerError)
+			return
+		}
+		if err := a.upsertSettingValue(settingProxyUsername, strings.TrimSpace(req.ProxyUsername)); err != nil {
+			http.Error(w, "save failed", http.StatusInternalServerError)
+			return
+		}
+		if req.ClearProxyPassword {
+			if err := a.upsertSettingValue(settingProxyPassword, ""); err != nil {
+				http.Error(w, "save failed", http.StatusInternalServerError)
+				return
+			}
+		} else if strings.TrimSpace(req.ProxyPassword) != "" {
+			encryptedPassword, err := a.encryptSecretValue(strings.TrimSpace(req.ProxyPassword))
+			if err != nil {
+				http.Error(w, "proxy password encryption failed", http.StatusInternalServerError)
+				return
+			}
+			if err := a.upsertSettingValue(settingProxyPassword, encryptedPassword); err != nil {
+				http.Error(w, "save failed", http.StatusInternalServerError)
+				return
+			}
 		}
 		if req.ClearGotifyTokenEncKey {
 			if err := a.upsertSettingValue(settingGotifyTokenEncKey, ""); err != nil {

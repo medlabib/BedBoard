@@ -153,11 +153,17 @@ function App() {
     hstsIncludeSubdomains: true,
     hstsPreload: false,
     gotifyTokenEncKey: '',
+    proxyEnabled: false,
+    proxyUrl: '',
+    proxyUsername: '',
+    proxyPassword: '',
     adminInitPasswordConfigured: false,
     gotifyTokenEncKeyConfigured: false,
+    proxyPasswordConfigured: false,
     triageSlaMinutes: 15,
     clearAdminInitPassword: false,
     clearGotifyTokenEncKey: false,
+    clearProxyPassword: false,
   });
   const [securityHealth, setSecurityHealth] = useState({ status: 'unknown', checks: [], loaded: false });
   const [bedEdits, setBedEdits] = useState({});
@@ -457,11 +463,17 @@ function App() {
       hstsIncludeSubdomains: Boolean(data.hstsIncludeSubdomains),
       hstsPreload: Boolean(data.hstsPreload),
       gotifyTokenEncKey: '',
+      proxyEnabled: Boolean(data.proxyEnabled),
+      proxyUrl: data.proxyUrl || '',
+      proxyUsername: data.proxyUsername || '',
+      proxyPassword: '',
       adminInitPasswordConfigured: Boolean(data.adminInitPasswordConfigured),
       gotifyTokenEncKeyConfigured: Boolean(data.gotifyTokenEncKeyConfigured),
+      proxyPasswordConfigured: Boolean(data.proxyPasswordConfigured),
       triageSlaMinutes: Number(data.triageSlaMinutes || 15),
       clearAdminInitPassword: false,
       clearGotifyTokenEncKey: false,
+      clearProxyPassword: false,
     }));
   };
 
@@ -479,9 +491,14 @@ function App() {
         hstsIncludeSubdomains: Boolean(securityConfigForm.hstsIncludeSubdomains),
         hstsPreload: Boolean(securityConfigForm.hstsPreload),
         gotifyTokenEncKey: securityConfigForm.gotifyTokenEncKey,
+        proxyEnabled: Boolean(securityConfigForm.proxyEnabled),
+        proxyUrl: securityConfigForm.proxyUrl,
+        proxyUsername: securityConfigForm.proxyUsername,
+        proxyPassword: securityConfigForm.proxyPassword,
         triageSlaMinutes: Number(securityConfigForm.triageSlaMinutes || 15),
         clearAdminInitPassword: Boolean(securityConfigForm.clearAdminInitPassword),
         clearGotifyTokenEncKey: Boolean(securityConfigForm.clearGotifyTokenEncKey),
+        clearProxyPassword: Boolean(securityConfigForm.clearProxyPassword),
       }),
     });
     if (!response.ok) {
