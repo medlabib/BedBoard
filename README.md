@@ -22,6 +22,9 @@ BedBoard is a local-first emergency board for bed occupancy and patient flow, wi
 - Admin operations: users, backups, restore, security health, integrations.
 - White-label + locale controlled by admin (French, English, Arabic).
 - Gotify integration with secure token storage and built-in test action.
+- Advanced patient workflow fields and statuses (reason, destination, outcome, lifecycle timestamps).
+- Patient timeline events and operational metrics (SLA breaches, wait-time KPIs, consultations by hour).
+- Audit filtering and CSV export, plus admin JSON patient import endpoint.
 
 ## Tech Stack
 
@@ -130,6 +133,33 @@ Returns:
 
 - Global status (`pass`, `warn`, `fail`)
 - Per-check details and recommendations
+
+## Testing and Coverage
+
+Backend tests and coverage:
+
+```bash
+go test ./... -coverprofile=coverage.out -covermode=atomic
+go tool cover -func=coverage.out | awk '/^total:/{print $NF}'
+```
+
+Frontend tests and coverage:
+
+```bash
+npm --prefix frontend install
+npm --prefix frontend run test
+npm --prefix frontend run test:coverage
+```
+
+Coverage snapshot (current baseline):
+
+- Backend Go: `24.9%` statements
+- Frontend Vitest (V8): `22.82%` statements
+
+Notes:
+
+- Current suite prioritizes business logic and operational behavior (patient lifecycle, triage SLA, import/export, alerting payloads, stats rendering).
+- Coverage can be increased further by adding API integration tests for protected route wrappers and broader component tests for `SettingsScreen`, `BedsGrid`, and `App` workflow transitions.
 
 ## Local Build and Release
 

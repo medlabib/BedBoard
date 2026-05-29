@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "preview": "vite preview",
     "bootstrap:latest": "npm view bootstrap version",
     "bootstrap:upgrade-if-54": "node ./scripts/upgrade-bootstrap-if-54.mjs"
@@ -16,8 +18,13 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
     "@vitejs/plugin-react": "^4.3.3",
+    "@vitest/coverage-v8": "^2.1.9",
+    "jsdom": "^25.0.1",
     "sass": "^1.100.0",
-    "vite": "^5.4.11"
+    "vite": "^5.4.11",
+    "vitest": "^2.1.8"
   }
 }
