@@ -25,20 +25,23 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      - name: Sync frontend assets for backend embed
+        run: bash scripts/prepare-backend-assets.sh
+
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
           go-version: '1.20'
 
       - name: Build backend
-        run: go build ./...
+        run: go build ./backend
 
       - name: Security health gate
         env:
           PORT: "18080"
         run: |
           set -euo pipefail
-          go run . > /tmp/bedboard-security.log 2>&1 &
+          go run ./backend > /tmp/bedboard-security.log 2>&1 &
           APP_PID=$!
           trap 'kill "$APP_PID" >/dev/null 2>&1 || true' EXIT
 

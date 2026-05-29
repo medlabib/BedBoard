@@ -12,6 +12,13 @@
 
 BedBoard is a local-first emergency board for bed occupancy and patient flow, with role-based access, realtime sync, and admin-managed security/UI settings.
 
+## Repository Layout
+
+- `backend/`: Go API server, business logic, persistence, and embedded frontend assets.
+- `frontend/`: React application (Vite) used for the dashboard and admin UX.
+- `.github/workflows/`: CI and signed release pipelines.
+- `scripts/`: helper scripts used by CI/local release (asset synchronization).
+
 ## Highlights
 
 - Login-first UX: unauthenticated users only see the sign-in page (no sign-up).
@@ -37,7 +44,8 @@ BedBoard is a local-first emergency board for bed occupancy and patient flow, wi
 ```bash
 npm --prefix frontend ci
 npm --prefix frontend run build
-go run .
+bash scripts/prepare-backend-assets.sh
+go run ./backend
 ```
 
 Default URL: `http://localhost:8080`
@@ -139,7 +147,7 @@ Returns:
 Backend tests and coverage:
 
 ```bash
-go test ./... -coverprofile=coverage.out -covermode=atomic
+go test ./backend/... -coverprofile=coverage.out -covermode=atomic
 go tool cover -func=coverage.out | awk '/^total:/{print $NF}'
 ```
 
@@ -151,10 +159,10 @@ npm --prefix frontend run test
 npm --prefix frontend run test:coverage
 ```
 
-Coverage snapshot (current baseline):
+Coverage snapshot:
 
-- Backend Go: `24.9%` statements
-- Frontend Vitest (V8): `22.82%` statements
+- Backend Go: `26.8%` statements
+- Frontend Vitest (V8): `32.82%` statements
 
 Notes:
 
@@ -167,7 +175,8 @@ Validation:
 
 ```bash
 npm --prefix frontend run build
-go build ./...
+bash scripts/prepare-backend-assets.sh
+go build ./backend
 ```
 
 Local release artifacts:
@@ -175,9 +184,10 @@ Local release artifacts:
 ```bash
 set +u
 npm --prefix frontend run build
+bash scripts/prepare-backend-assets.sh
 mkdir -p release
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags='-s -w' -o release/BedBoard_windows_amd64.exe .
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags='-s -w' -o release/BedBoard_linux_amd64 .
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags='-s -w' -o release/BedBoard_windows_amd64.exe ./backend
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags='-s -w' -o release/BedBoard_linux_amd64 ./backend
 rm -f release/BedBoard_windows_amd64.zip release/BedBoard_linux_amd64.tar.gz release/checksums.txt
 zip -j release/BedBoard_windows_amd64.zip release/BedBoard_windows_amd64.exe
 tar -czf release/BedBoard_linux_amd64.tar.gz -C release BedBoard_linux_amd64
@@ -196,9 +206,15 @@ Generated files:
 
 The repository includes a tag-driven GitHub Actions workflow in `.github/workflows/release-signed.yml`.
 
+### Version Channels
+
+- Historical versions are archived under `alpha-*` tags.
+- Active signed release channel uses `beta-*` tags.
+- `beta-1.0.0` is the first beta milestone.
+
 How it works:
 
-- Push a tag matching `v*`.
+- Push a tag matching `beta-*`.
 - The workflow builds the frontend and backend.
 - A security health gate runs before packaging.
 - Release artifacts are signed with Sigstore Cosign keyless signing.
@@ -208,10 +224,10 @@ Typical commands:
 
 ```bash
 git add .
-git commit -m "release: prepare next version"
+git commit -m "release: prepare beta"
 git push origin main
-git tag vX.Y.Z
-git push origin vX.Y.Z
+git tag beta-X.Y.Z
+git push origin beta-X.Y.Z
 ```
 
 Published release assets include:

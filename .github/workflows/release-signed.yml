@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - 'beta-*'
 
 permissions:
   contents: write
@@ -30,6 +30,9 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      - name: Sync frontend assets for backend embed
+        run: bash scripts/prepare-backend-assets.sh
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -40,7 +43,7 @@ jobs:
           PORT: "18080"
         run: |
           set -euo pipefail
-          go run . > /tmp/bedboard-security.log 2>&1 &
+          go run ./backend > /tmp/bedboard-security.log 2>&1 &
           APP_PID=$!
           trap 'kill "$APP_PID" >/dev/null 2>&1 || true' EXIT
 
@@ -71,11 +74,11 @@ jobs:
       - name: Build unsigned Windows binary
         run: |
           mkdir -p release
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o release/BedBoard_windows_amd64.exe .
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o release/BedBoard_windows_amd64.exe ./backend
 
       - name: Build Linux binary
         run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o release/BedBoard_linux_amd64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o release/BedBoard_linux_amd64 ./backend
           tar -czf release/BedBoard_linux_amd64.tar.gz -C release BedBoard_linux_amd64
 
       - name: Package ZIP
