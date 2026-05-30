@@ -177,3 +177,49 @@ func TestHandleAuditExportReturnsCSV(t *testing.T) {
 		t.Fatalf("expected audit action in CSV export")
 	}
 }
+
+func TestHandleStatusAlertKeepsAssignedPatient(t *testing.T) {
+	app, cleanup := setupTestApp(t)
+	defer cleanup()
+
+	_, err := app.upsertAndAssignPatient(patientRequest{
+		RegistrationNumber: "REG-ALERT-1",
+		Name:               "PATIENT-ALERT",
+		PatientType:        patientTypeMedical,
+		TriageScore:        intPtr(3),
+		BedNumber:          1,
+	}, "admin")
+	if err != nil {
+		t.Fatalf("upsertAndAssignPatient: %v", err)
+	}
+
+	token := createAdminSession(t, app)
+	req := newAuthedJSONRequest(t, http.MethodPost, "/api/status", token, map[string]any{
+		"number": 1,
+		"status": statusAlert,
+	})
+	rr := httptest.NewRecorder()
+	app.handleStatus(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var bed Bed
+	if err := app.db.Where("number = ?", 1).First(&bed).Error; err != nil {
+		t.Fatalf("reload bed: %v", err)
+	}
+	if bed.PatientID == nil {
+		t.Fatalf("expected patient to remain assigned when status is alert")
+	}
+
+	var patient Patient
+	if err := app.db.Where("registration_number = ?", "REG-ALERT-1").First(&patient).Error; err != nil {
+		t.Fatalf("reload patient: %v", err)
+	}
+	if patient.BedID == nil {
+		t.Fatalf("expected patient bed assignment to remain")
+	}
+	if patient.Status != patientStatusAssigned {
+		t.Fatalf("expected assigned status, got %q", patient.Status)
+	}
+}

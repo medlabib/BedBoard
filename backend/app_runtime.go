@@ -727,7 +727,7 @@ func (a *App) handleStatus(w http.ResponseWriter, r *http.Request) {
 			alertSnapshot.PatientName = strings.TrimSpace(req.PatientName)
 		}
 	}
-	if bed.Status == statusFree || bed.Status == statusCleaning || bed.Status == statusAlert {
+	if bed.Status == statusFree || bed.Status == statusCleaning {
 		if bed.PatientID != nil {
 			markConsulted := bed.Status == statusFree || bed.Status == statusCleaning
 			a.releasePatientByID(*bed.PatientID, user.Username, markConsulted)
