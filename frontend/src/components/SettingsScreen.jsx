@@ -151,6 +151,13 @@ export default function SettingsScreen({
                 </select>
               </label>
               <label>
+                {tr(locale, 'Vue salle: identite affichee', 'Room view: displayed identity', 'عرض القاعة: الهوية المعروضة')}
+                <select className="form-select" value={uiConfigForm.patientViewIdentityMode || 'name'} onChange={(event) => setUiConfigForm((current) => ({ ...current, patientViewIdentityMode: event.target.value }))}>
+                  <option value="name">{tr(locale, 'Nom', 'Name', 'الاسم')}</option>
+                  <option value="number">{tr(locale, 'Numero inscription', 'Registration number', 'رقم التسجيل')}</option>
+                </select>
+              </label>
+              <label>
                 {tr(locale, 'Logo (URL data image/* base64)', 'Logo (image/* data URL base64)', 'الشعار (رابط بيانات image/* base64)')}
                 <input className="form-control" value={uiConfigForm.logoDataUrl} type="text" placeholder="data:image/png;base64,..." onChange={(event) => setUiConfigForm((current) => ({ ...current, logoDataUrl: event.target.value }))} />
               </label>

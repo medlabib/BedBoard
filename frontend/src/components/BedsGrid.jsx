@@ -19,6 +19,7 @@ export default function BedsGrid({
   showSuccess,
   readErrorMessage,
   setConfirm,
+  assignPatientToBed,
   locale,
 }) {
   if (!beds.length) {
@@ -128,6 +129,10 @@ export default function BedsGrid({
                 const reg = assignByBed[bed.number];
                 if (!reg) {
                   showError(tr(locale, 'Selectionnez un patient avant affectation.', 'Select a patient before assigning.', 'اختر مريضًا قبل التخصيص.'));
+                  return;
+                }
+                if (assignPatientToBed) {
+                  await assignPatientToBed(reg, bed.number);
                   return;
                 }
                 const selectedPatient = activePatients.find((p) => p.registrationNumber === reg);

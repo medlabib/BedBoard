@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -994,9 +995,43 @@ func (a *App) handlePatientEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var events []PatientEvent
-	if err := a.db.Where("registration_number = ?", registrationNumber).Order("created_at desc").Limit(limit).Find(&events).Error; err != nil {
+	if err := a.db.Where("lower(registration_number) = lower(?)", registrationNumber).Order("created_at desc").Limit(limit).Find(&events).Error; err != nil {
 		http.Error(w, "events read failed", http.StatusInternalServerError)
 		return
+	}
+	if len(events) == 0 {
+		var patient Patient
+		if err := a.db.Where("lower(registration_number) = lower(?)", registrationNumber).First(&patient).Error; err == nil {
+			fallback := make([]PatientEvent, 0, 8)
+			appendLifecycle := func(ts *time.Time, event string, details map[string]any) {
+				if ts == nil || ts.IsZero() {
+					return
+				}
+				raw, _ := json.Marshal(details)
+				fallback = append(fallback, PatientEvent{
+					RegistrationNumber: patient.RegistrationNumber,
+					Username:           "system",
+					Event:              event,
+					Details:            string(raw),
+					CreatedAt:          *ts,
+				})
+			}
+			appendLifecycle(&patient.CreatedAt, "patient.created", map[string]any{"source": "legacy"})
+			appendLifecycle(patient.ArrivedAt, "patient.arrived", map[string]any{"status": patient.Status})
+			appendLifecycle(patient.TriagedAt, "patient.triaged", map[string]any{"triageScore": patient.TriageScore})
+			appendLifecycle(patient.AssignedAt, "patient.assigned", map[string]any{"source": "legacy"})
+			appendLifecycle(patient.StartedAt, "patient.started", map[string]any{"source": "legacy"})
+			appendLifecycle(patient.ConsultedAt, "patient.consulted", map[string]any{"source": "legacy"})
+			appendLifecycle(patient.ExitAt, "patient.exited", map[string]any{"status": patient.Status})
+			appendLifecycle(patient.ArchivedAt, "patient.archived", map[string]any{"status": patient.Status})
+			sort.Slice(fallback, func(i, j int) bool {
+				return fallback[i].CreatedAt.After(fallback[j].CreatedAt)
+			})
+			if len(fallback) > limit {
+				fallback = fallback[:limit]
+			}
+			events = fallback
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"events": events})
 }

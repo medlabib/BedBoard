@@ -186,3 +186,37 @@ func TestHandleSecurityConfigPersistsTriageSLA(t *testing.T) {
 		t.Fatalf("expected proxy password configured")
 	}
 }
+
+func TestHandleUIConfigPersistsPatientViewIdentityMode(t *testing.T) {
+	app, cleanup := setupTestApp(t)
+	defer cleanup()
+
+	postReq := httptest.NewRequest(http.MethodPost, "/api/admin/ui/config", mustJSONBody(t, map[string]any{
+		"appName":                 "BedBoard",
+		"logoDataUrl":             "",
+		"locale":                  "en",
+		"patientViewIdentityMode": "number",
+		"clearLogo":               false,
+	}))
+	postReq.Header.Set("Content-Type", "application/json")
+	postRes := httptest.NewRecorder()
+	app.handleUIConfig(postRes, postReq)
+	if postRes.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", postRes.Code, postRes.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/public/ui-config", nil)
+	getRes := httptest.NewRecorder()
+	app.handlePublicUIConfig(getRes, getReq)
+	if getRes.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", getRes.Code)
+	}
+
+	var view uiConfigView
+	if err := json.Unmarshal(getRes.Body.Bytes(), &view); err != nil {
+		t.Fatalf("decode ui config: %v", err)
+	}
+	if view.PatientViewIdentityMode != "number" {
+		t.Fatalf("expected patientViewIdentityMode=number, got %q", view.PatientViewIdentityMode)
+	}
+}

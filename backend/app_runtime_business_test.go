@@ -223,3 +223,54 @@ func TestHandleStatusAlertKeepsAssignedPatient(t *testing.T) {
 		t.Fatalf("expected assigned status, got %q", patient.Status)
 	}
 }
+
+func TestHandlePatientEventsProvidesFallbackTimeline(t *testing.T) {
+	app, cleanup := setupTestApp(t)
+	defer cleanup()
+
+	now := time.Now()
+	arrived := now.Add(-20 * time.Minute)
+	triaged := now.Add(-15 * time.Minute)
+	started := now.Add(-10 * time.Minute)
+	assigned := now.Add(-9 * time.Minute)
+	if err := app.db.Create(&Patient{
+		RegistrationNumber: "LEGACY-CASE-1",
+		Name:               "Legacy Case",
+		PatientType:        patientTypeMedical,
+		TriageScore:        3,
+		Status:             patientStatusAssigned,
+		ArrivedAt:          &arrived,
+		TriagedAt:          &triaged,
+		StartedAt:          &started,
+		AssignedAt:         &assigned,
+	}).Error; err != nil {
+		t.Fatalf("create patient: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/patients/events?registrationNumber=legacy-case-1", nil)
+	rr := httptest.NewRecorder()
+	app.handlePatientEvents(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var body struct {
+		Events []PatientEvent `json:"events"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode events: %v", err)
+	}
+	if len(body.Events) == 0 {
+		t.Fatalf("expected fallback events for legacy patient")
+	}
+	foundArrived := false
+	for _, evt := range body.Events {
+		if evt.Event == "patient.arrived" {
+			foundArrived = true
+			break
+		}
+	}
+	if !foundArrived {
+		t.Fatalf("expected patient.arrived fallback event")
+	}
+}

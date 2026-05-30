@@ -13,7 +13,7 @@ export default function PatientViewPage({
         <div className="nav-left">
           <div className="brand-mark"><img src={brandLogo || '/logo.svg'} alt={tr(locale, "Logo de l'hopital", 'Hospital logo', 'شعار المستشفى')} /></div>
           <div className="nav-title">
-            <strong>{brandName} - {tr(locale, 'Vue patient', 'Patient view', 'عرض المرضى')}</strong>
+            <strong>{brandName} - {tr(locale, 'Vue salle', 'Room view', 'عرض القاعة')}</strong>
             <span>{tr(locale, "Affichage salle d'attente", 'Waiting room display', 'شاشة غرفة الانتظار')}</span>
           </div>
         </div>

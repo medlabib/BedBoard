@@ -65,6 +65,15 @@ function normalizePatientTypeValue(value) {
   return 'medical';
 }
 
+function parsePatientTime(patient) {
+  const candidates = [patient?.arrivedAt, patient?.createdAt, patient?.updatedAt, patient?.assignedAt];
+  for (const value of candidates) {
+    const time = value ? new Date(value).getTime() : NaN;
+    if (Number.isFinite(time) && time > 0) return time;
+  }
+  return Number.MAX_SAFE_INTEGER;
+}
+
 function loadPatientTypeFilter() {
   try {
     const raw = localStorage.getItem('bedboard_patient_type_filter');
@@ -132,8 +141,8 @@ function App() {
   const [authForm, setAuthForm] = useState({ username: 'admin', password: '' });
   const [authMessage, setAuthMessage] = useState('');
   const [connectionState, setConnectionState] = useState('');
-  const [uiConfigForm, setUiConfigForm] = useState({ appName: 'BedBoard', logoDataUrl: '', locale: 'fr', clearLogo: false });
-  const [publicUiConfig, setPublicUiConfig] = useState({ appName: 'BedBoard', logoDataUrl: '', locale: 'fr' });
+  const [uiConfigForm, setUiConfigForm] = useState({ appName: 'BedBoard', logoDataUrl: '', locale: 'fr', patientViewIdentityMode: 'name', clearLogo: false });
+  const [publicUiConfig, setPublicUiConfig] = useState({ appName: 'BedBoard', logoDataUrl: '', locale: 'fr', patientViewIdentityMode: 'name' });
   const [newBed, setNewBed] = useState({ number: '', room: '', name: '', type: 'standard' });
   const [newPatient, setNewPatient] = useState({ registrationNumber: '', name: '', patientType: 'medical', bedNumber: '', triageScore: '0', status: 'arrived', reason: '', destination: '', outcome: '' });
   const [patientTypeFilter, setPatientTypeFilter] = useState(() => loadPatientTypeFilter());
@@ -188,6 +197,7 @@ function App() {
   const locale = normalizeLocale(publicUiConfig.locale);
   const brandName = String(publicUiConfig.appName || 'BedBoard');
   const brandLogo = String(publicUiConfig.logoDataUrl || '/logo.svg');
+  const patientViewIdentityMode = String(publicUiConfig.patientViewIdentityMode || 'name') === 'number' ? 'number' : 'name';
   const role = normalizeRole(user.role);
   const isReception = role === 'reception';
   const isTriage = role === 'triage';
@@ -272,6 +282,7 @@ function App() {
       appName: data.appName || 'BedBoard',
       logoDataUrl: data.logoDataUrl || '',
       locale: normalizeLocale(data.locale),
+      patientViewIdentityMode: String(data.patientViewIdentityMode || 'name') === 'number' ? 'number' : 'name',
     });
   };
 
@@ -287,6 +298,7 @@ function App() {
       appName: data.appName || 'BedBoard',
       logoDataUrl: data.logoDataUrl || '',
       locale: normalizeLocale(data.locale),
+      patientViewIdentityMode: String(data.patientViewIdentityMode || 'name') === 'number' ? 'number' : 'name',
       clearLogo: false,
     });
   };
@@ -299,6 +311,7 @@ function App() {
         appName: uiConfigForm.appName,
         logoDataUrl: uiConfigForm.logoDataUrl,
         locale: uiConfigForm.locale,
+        patientViewIdentityMode: uiConfigForm.patientViewIdentityMode,
         clearLogo: Boolean(uiConfigForm.clearLogo),
       }),
     });
@@ -864,6 +877,37 @@ function App() {
     return visiblePatients.filter((patient) => normalizePatientTypeValue(patient.patientType) === patientTypeFilter);
   }, [canCustomizePatientTypeVisibility, visiblePatients, patientTypeFilter]);
 
+  const keyboardCategory = useMemo(() => (patientTypeFilter === 'all' ? 'all' : normalizePatientTypeValue(patientTypeFilter)), [patientTypeFilter]);
+
+  const assignmentCandidates = useMemo(() => visiblePatients
+    .filter((patient) => !patient.bedNumber)
+    .filter((patient) => keyboardCategory === 'all' || normalizePatientTypeValue(patient.patientType) === keyboardCategory), [visiblePatients, keyboardCategory]);
+
+  const highestTriageCandidate = useMemo(() => {
+    if (!assignmentCandidates.length) return null;
+    return [...assignmentCandidates].sort((a, b) => {
+      const triageDiff = triageLevelOf(b) - triageLevelOf(a);
+      if (triageDiff !== 0) return triageDiff;
+      return parsePatientTime(a) - parsePatientTime(b);
+    })[0];
+  }, [assignmentCandidates]);
+
+  const oldestUnseenCandidate = useMemo(() => {
+    if (!assignmentCandidates.length) return null;
+    const unseen = assignmentCandidates.filter((patient) => {
+      const status = String(patient.status || '').toLowerCase();
+      return status === 'arrived' || status === 'triaged' || status === 'waiting' || !status;
+    });
+    const pool = unseen.length ? unseen : assignmentCandidates;
+    return [...pool].sort((a, b) => parsePatientTime(a) - parsePatientTime(b))[0] || null;
+  }, [assignmentCandidates]);
+
+  const firstFreeBed = useMemo(() => {
+    const freeBeds = beds.filter((bed) => normalizeStatus(bed.status) === 'libre');
+    if (!freeBeds.length) return null;
+    return [...freeBeds].sort((a, b) => Number(a.number) - Number(b.number))[0];
+  }, [beds]);
+
   const toggleVisiblePatientType = (patientType) => {
     setVisiblePatientTypes((current) => {
       if (current.includes(patientType)) {
@@ -876,6 +920,102 @@ function App() {
       return [...current, patientType];
     });
   };
+
+  const assignPatientToBed = async (registrationNumber, bedNumber) => {
+    if (!canManageBeds || !canManagePatients) return false;
+    const reg = String(registrationNumber || '').trim();
+    const bedNum = Number(bedNumber);
+    if (!reg || !bedNum) return false;
+    const selectedPatient = activePatients.find((p) => p.registrationNumber === reg);
+    const response = await api('/api/patients', {
+      method: 'POST',
+      body: JSON.stringify({ registrationNumber: reg, name: selectedPatient?.name || '', bedNumber: bedNum }),
+    });
+    if (!response.ok) {
+      showError(await readErrorMessage(response, tr(locale, 'Affectation impossible.', 'Unable to assign.', 'تعذر التخصيص.')));
+      return false;
+    }
+    setAssignByBed((current) => ({ ...current, [bedNum]: '' }));
+    showSuccess(`${tr(locale, 'Affectation terminee', 'Assignment completed', 'اكتمل التخصيص')}: ${reg} -> ${tr(locale, 'lit', 'bed', 'سرير')} ${bedNum}.`);
+    return true;
+  };
+
+  useEffect(() => {
+    const isEditableTarget = (target) => {
+      if (!target) return false;
+      const tag = String(target.tagName || '').toLowerCase();
+      return tag === 'input' || tag === 'textarea' || tag === 'select' || Boolean(target.isContentEditable);
+    };
+
+    const onKeyDown = (event) => {
+      if (!authenticated || isPatientPage || !canManageBeds || !canManagePatients) return;
+      if (isEditableTarget(event.target)) return;
+      if (event.repeat) return;
+
+      if (event.code === 'Space') {
+        event.preventDefault();
+        const chosen = event.shiftKey ? oldestUnseenCandidate : highestTriageCandidate;
+        if (!firstFreeBed) {
+          showError(tr(locale, 'Aucun lit libre pour affectation rapide.', 'No free bed for quick assignment.', 'لا يوجد سرير شاغر للتخصيص السريع.'));
+          return;
+        }
+        if (!chosen?.registrationNumber) {
+          showError(tr(locale, 'Aucun dossier disponible dans la categorie selectionnee.', 'No record available in selected category.', 'لا توجد حالة متاحة في الفئة المحددة.'));
+          return;
+        }
+        const modeLabel = event.shiftKey
+          ? tr(locale, 'plus ancien non vu', 'oldest unseen', 'الأقدم غير المرئي')
+          : tr(locale, 'triage le plus eleve', 'highest triage', 'أعلى فرز');
+        assignPatientToBed(chosen.registrationNumber, firstFreeBed.number).then((ok) => {
+          if (!ok) return;
+          showSuccess(`${tr(locale, 'Raccourci applique', 'Shortcut applied', 'تم تطبيق الاختصار')} (${modeLabel})`);
+        }).catch(() => {});
+        return;
+      }
+
+      if (event.key === 'b' || event.key === 'B') {
+        event.preventDefault();
+        setScreen('beds');
+        return;
+      }
+
+      if (event.key === 'p' || event.key === 'P') {
+        event.preventDefault();
+        setScreen('patients');
+        return;
+      }
+
+      if (event.key === 'r' || event.key === 'R') {
+        event.preventDefault();
+        refreshState().then(() => {
+          showSuccess(tr(locale, 'Donnees rafraichies.', 'Data refreshed.', 'تم تحديث البيانات.'));
+        }).catch(() => {});
+        return;
+      }
+
+      if (event.key === '?') {
+        event.preventDefault();
+        showSuccess(tr(
+          locale,
+          'Raccourcis: Espace=triage max, Shift+Espace=plus ancien non vu, B=Lits, P=Patients, R=Rafraichir.',
+          'Shortcuts: Space=highest triage, Shift+Space=oldest unseen, B=Beds, P=Patients, R=Refresh.',
+          'الاختصارات: مسافة=أعلى فرز، Shift+مسافة=الأقدم غير المرئي، B=الأسرة، P=المرضى، R=تحديث.'
+        ));
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    authenticated,
+    isPatientPage,
+    canManageBeds,
+    canManagePatients,
+    firstFreeBed,
+    highestTriageCandidate,
+    oldestUnseenCandidate,
+    locale,
+  ]);
 
   useEffect(() => {
     setBedEdits((current) => {
@@ -1190,18 +1330,25 @@ function App() {
 
   const patientPanel = useMemo(() => {
     const current = currentPatient;
-    if (!current) return <div className="empty">{tr(locale, 'Aucun patient.', 'No patient.', 'لا يوجد مريض.')}</div>;
+    if (!current) return <div className="empty">{tr(locale, 'Aucun dossier.', 'No case.', 'لا توجد حالة.')}</div>;
     const currentName = String(current.name || '').trim();
     const currentReg = String(current.registrationNumber || '').trim();
-    const identity = currentName && currentReg
-      ? `${currentName} (${currentReg})`
-      : (currentName || currentReg || tr(locale, 'Patient sans identifiant', 'Patient without identifier', 'مريض بدون معرف'));
+    const identity = patientViewIdentityMode === 'number'
+      ? (currentReg || currentName || tr(locale, 'Sans identifiant', 'Without identifier', 'بدون معرف'))
+      : (currentName || currentReg || tr(locale, 'Sans identifiant', 'Without identifier', 'بدون معرف'));
+    const wish = tr(
+      locale,
+      'Bon retablissement et courage.',
+      'Wishing you a quick and smooth recovery.',
+      'نتمنى لك الشفاء العاجل والتعافي السريع.'
+    );
     return (
       <div className="patient-center">
-        <div className="patient-line">{tr(locale, 'Patient', 'Patient', 'المريض')} {escapeText(identity)} - {current.bedNumber ? `${escapeText(current.roomName || tr(locale, 'Chambre', 'Room', 'غرفة'))} - ${escapeText(current.bedName || `${tr(locale, 'Lit', 'Bed', 'سرير')} ${current.bedNumber}`)}` : tr(locale, 'Non assigne', 'Unassigned', 'غير مخصص')}</div>
+        <div className="patient-line">{escapeText(identity)} - {current.bedNumber ? `${escapeText(current.roomName || tr(locale, 'Chambre', 'Room', 'غرفة'))} - ${escapeText(current.bedName || `${tr(locale, 'Lit', 'Bed', 'سرير')} ${current.bedNumber}`)}` : tr(locale, 'Non assigne', 'Unassigned', 'غير مخصص')}</div>
+        <div className="small-note" style={{ marginTop: 12, fontSize: '1.05rem' }}>{wish}</div>
       </div>
     );
-  }, [currentPatient, locale]);
+  }, [currentPatient, locale, patientViewIdentityMode]);
 
   if (isPatientPage) {
     if (!authResolved) {
@@ -1431,6 +1578,7 @@ function App() {
                   showSuccess={showSuccess}
                   readErrorMessage={readErrorMessage}
                   setConfirm={setConfirm}
+                  assignPatientToBed={assignPatientToBed}
                   locale={locale}
                 />
               </div>

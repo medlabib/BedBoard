@@ -75,7 +75,7 @@ describe('Basic components coverage', () => {
       </>,
     );
 
-    expect(screen.getByText('BedBoard - Patient view')).toBeInTheDocument();
+    expect(screen.getByText('BedBoard - Room view')).toBeInTheDocument();
     expect(screen.getByText('Panel')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Back to board' }));
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
