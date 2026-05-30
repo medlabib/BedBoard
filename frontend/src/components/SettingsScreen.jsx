@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { roleLabel, tr } from '../lib/i18n';
 
 const sections = ['parameters', 'security', 'integrations', 'operations'];
@@ -7,26 +7,33 @@ export default function SettingsScreen({
   newUser,
   setNewUser,
   createUser,
+  refreshUsers,
   resetPasswordForm,
   setResetPasswordForm,
   resetUserPassword,
+  usersCount,
   createBackup,
   restoreLatestBackup,
   lastBackupFile,
+  refreshAuditLogs,
   gotifyForm,
   setGotifyForm,
   saveGotifySettings,
   testGotifySettings,
+  refreshGotifySettings,
   alertChannelsForm,
   setAlertChannelsForm,
   saveAlertChannelsSettings,
   testAlertChannelsSettings,
+  refreshAlertChannelsSettings,
   alertNotifications,
   refreshAlertNotifications,
   acknowledgeAlertNotification,
+  acknowledgeAllAlertNotifications,
   securityConfigForm,
   setSecurityConfigForm,
   saveSecurityConfig,
+  refreshSecurityConfig,
   securityHealth,
   refreshSecurityHealth,
   exportAuditCsv,
@@ -36,6 +43,7 @@ export default function SettingsScreen({
   uiConfigForm,
   setUiConfigForm,
   saveUiConfig,
+  refreshUIConfig,
   locale,
   renderUsers,
   auditLogs,
@@ -44,6 +52,15 @@ export default function SettingsScreen({
   const [activeSection, setActiveSection] = useState('parameters');
   const healthStatus = String(securityHealth?.status || 'unknown').toLowerCase();
   const checks = Array.isArray(securityHealth?.checks) ? securityHealth.checks : [];
+  const notifications = Array.isArray(alertNotifications) ? alertNotifications : [];
+  const pendingNotifications = useMemo(
+    () => notifications.filter((entry) => String(entry.status || '').toLowerCase() !== 'acknowledged'),
+    [notifications],
+  );
+  const failedNotifications = useMemo(
+    () => notifications.filter((entry) => String(entry.status || '').toLowerCase() === 'failed'),
+    [notifications],
+  );
 
   const buildStrongPassword = () => {
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%&*?';
@@ -71,7 +88,37 @@ export default function SettingsScreen({
   };
 
   return (
-    <div className="screen active">
+    <div className="screen active settings-shell">
+      <div className="settings-toolbar form-card">
+        <div className="settings-toolbar-row">
+          <h2>{tr(locale, 'Console administration', 'Administration console', 'وحدة الإدارة')}</h2>
+          <div className="settings-action-row">
+            <button className="btn" type="button" onClick={() => setActiveSection('parameters')}>{sectionLabel('parameters')}</button>
+            <button className="btn" type="button" onClick={() => setActiveSection('security')}>{sectionLabel('security')}</button>
+            <button className="btn" type="button" onClick={() => setActiveSection('integrations')}>{sectionLabel('integrations')}</button>
+            <button className="btn" type="button" onClick={() => setActiveSection('operations')}>{sectionLabel('operations')}</button>
+          </div>
+        </div>
+        <div className="settings-kpi-grid">
+          <div className="settings-kpi">
+            <span>{tr(locale, 'Utilisateurs', 'Users', 'المستخدمون')}</span>
+            <strong>{Number(usersCount || 0)}</strong>
+          </div>
+          <div className="settings-kpi">
+            <span>{tr(locale, 'Securite', 'Security', 'الأمان')}</span>
+            <strong className={`security-chip inline ${healthStatus}`}>{healthStatus.toUpperCase()}</strong>
+          </div>
+          <div className="settings-kpi">
+            <span>{tr(locale, 'Alertes en attente', 'Pending alerts', 'تنبيهات معلقة')}</span>
+            <strong>{pendingNotifications.length}</strong>
+          </div>
+          <div className="settings-kpi">
+            <span>{tr(locale, 'Echecs canaux', 'Channel failures', 'فشل القنوات')}</span>
+            <strong>{failedNotifications.length}</strong>
+          </div>
+        </div>
+      </div>
+
       <div className="tab-strip">
         {sections.map((section) => (
           <button
@@ -86,11 +133,11 @@ export default function SettingsScreen({
       </div>
 
       {activeSection === 'parameters' ? (
-        <div className="controls-grid">
-          <div className="form-card">
+        <div className="settings-panel-grid">
+          <div className="form-card settings-wide">
             <h2>{tr(locale, 'White-label et langue', 'White-label and language', 'الهوية البصرية واللغة')}</h2>
             <p className="small-note">{tr(locale, 'Nom application, logo et langue globale de l interface.', 'App name, logo and global interface language.', 'اسم التطبيق والشعار ولغة الواجهة العامة.')}</p>
-            <div className="form-grid">
+            <div className="form-grid compact">
               <label>
                 {tr(locale, 'Nom application', 'Application name', 'اسم التطبيق')}
                 <input className="form-control" value={uiConfigForm.appName} type="text" onChange={(event) => setUiConfigForm((current) => ({ ...current, appName: event.target.value }))} />
@@ -114,13 +161,16 @@ export default function SettingsScreen({
                   <option value="1">{tr(locale, 'Oui', 'Yes', 'نعم')}</option>
                 </select>
               </label>
-              <button className="btn primary" type="button" onClick={saveUiConfig}>{tr(locale, 'Enregistrer branding + langue', 'Save branding + language', 'حفظ الهوية + اللغة')}</button>
+              <div className="settings-action-row">
+                <button className="btn primary" type="button" onClick={saveUiConfig}>{tr(locale, 'Enregistrer branding + langue', 'Save branding + language', 'حفظ الهوية + اللغة')}</button>
+                <button className="btn" type="button" onClick={refreshUIConfig}>{tr(locale, 'Recharger', 'Reload', 'إعادة التحميل')}</button>
+              </div>
             </div>
           </div>
 
           <div className="form-card settings-admin-card">
             <h2>{tr(locale, 'Gestion utilisateurs', 'User management', 'إدارة المستخدمين')}</h2>
-            <div className="form-grid admin-form-grid">
+            <div className="form-grid compact">
               <label>
                 {tr(locale, 'Identifiant', 'Username', 'اسم المستخدم')}
                 <input className="form-control" value={newUser.username} type="text" autoComplete="off" onChange={(event) => setNewUser((current) => ({ ...current, username: event.target.value }))} />
@@ -139,14 +189,17 @@ export default function SettingsScreen({
                   <option value="admin">{roleLabel(locale, 'admin')}</option>
                 </select>
               </label>
-              <button className="btn" type="button" onClick={() => setNewUser((current) => ({ ...current, password: buildStrongPassword() }))}>{tr(locale, 'Generer mot de passe', 'Generate password', 'توليد كلمة مرور')}</button>
-              <button className="btn primary" type="button" onClick={createUser}>{tr(locale, 'Creer le compte', 'Create account', 'إنشاء الحساب')}</button>
+              <div className="settings-action-row">
+                <button className="btn" type="button" onClick={() => setNewUser((current) => ({ ...current, password: buildStrongPassword() }))}>{tr(locale, 'Generer mot de passe', 'Generate password', 'توليد كلمة مرور')}</button>
+                <button className="btn primary" type="button" onClick={createUser}>{tr(locale, 'Creer le compte', 'Create account', 'إنشاء الحساب')}</button>
+                <button className="btn" type="button" onClick={refreshUsers}>{tr(locale, 'Rafraichir utilisateurs', 'Refresh users', 'تحديث المستخدمين')}</button>
+              </div>
             </div>
           </div>
 
           <div className="form-card settings-admin-card">
             <h2>{tr(locale, 'Reinitialiser mot de passe', 'Reset password', 'إعادة تعيين كلمة المرور')}</h2>
-            <div className="form-grid admin-form-grid">
+            <div className="form-grid compact">
               <label>
                 {tr(locale, 'Utilisateur', 'User', 'المستخدم')}
                 <input className="form-control" value={resetPasswordForm.username} type="text" autoComplete="off" onChange={(event) => setResetPasswordForm((current) => ({ ...current, username: event.target.value }))} />
@@ -169,7 +222,7 @@ export default function SettingsScreen({
             </div>
           </div>
 
-          <div className="table-wrap">
+          <div className="table-wrap settings-wide">
             <table className="table table-sm align-middle mb-0">
               <thead>
                 <tr>
@@ -185,10 +238,11 @@ export default function SettingsScreen({
       ) : null}
 
       {activeSection === 'security' ? (
-        <div className="controls-grid">
-          <div className="form-card">
+        <div className="settings-panel-grid">
+          <div className="form-card settings-wide">
             <h2>{tr(locale, 'Configuration securite', 'Security configuration', 'إعدادات الأمان')}</h2>
-            <div className="form-grid">
+            <div className="settings-stack">
+              <div className="form-grid compact">
               <label>
                 Admin bootstrap username
                 <input className="form-control" value={securityConfigForm.adminInitUsername} type="text" onChange={(event) => setSecurityConfigForm((current) => ({ ...current, adminInitUsername: event.target.value }))} />
@@ -306,7 +360,12 @@ export default function SettingsScreen({
                   <option value="1">{tr(locale, 'Oui', 'Yes', 'نعم')}</option>
                 </select>
               </label>
-              <button className="btn primary" type="button" onClick={saveSecurityConfig}>{tr(locale, 'Enregistrer securite', 'Save security', 'حفظ الأمان')}</button>
+              <div className="settings-action-row">
+                <button className="btn primary" type="button" onClick={saveSecurityConfig}>{tr(locale, 'Enregistrer securite', 'Save security', 'حفظ الأمان')}</button>
+                <button className="btn" type="button" onClick={refreshSecurityConfig}>{tr(locale, 'Recharger config', 'Reload config', 'إعادة تحميل الإعدادات')}</button>
+                <button className="btn" type="button" onClick={refreshSecurityHealth}>{tr(locale, 'Audit instantane', 'Run audit now', 'تدقيق فوري')}</button>
+              </div>
+              </div>
             </div>
           </div>
 
@@ -322,7 +381,7 @@ export default function SettingsScreen({
             </div>
           </div>
 
-          <div className="table-wrap">
+          <div className="table-wrap settings-wide">
             <table className="table table-sm align-middle mb-0">
               <thead>
                 <tr>
@@ -354,11 +413,11 @@ export default function SettingsScreen({
       ) : null}
 
       {activeSection === 'integrations' ? (
-        <div className="controls-grid">
+        <div className="settings-panel-grid">
           <div className="form-card settings-focus-card">
             <h2>{tr(locale, 'Integration Gotify', 'Gotify integration', 'تكامل Gotify')}</h2>
             <p className="small-note">{tr(locale, 'Configurer URL, token et priorite. Le token est requis si integration active.', 'Configure URL, token and priority. Token is required when integration is enabled.', 'قم بتكوين الرابط والرمز والأولوية. الرمز مطلوب عند تفعيل التكامل.')}</p>
-            <div className="form-grid">
+            <div className="form-grid compact">
               <label>
                 {tr(locale, 'Activation', 'Enable', 'تفعيل')}
                 <select className="form-select" value={gotifyForm.enabled ? '1' : '0'} onChange={(event) => setGotifyForm((current) => ({ ...current, enabled: event.target.value === '1' }))}>
@@ -385,8 +444,11 @@ export default function SettingsScreen({
                   <option value="1">{tr(locale, 'Oui', 'Yes', 'نعم')}</option>
                 </select>
               </label>
-              <button className="btn primary" type="button" onClick={saveGotifySettings}>{tr(locale, 'Enregistrer Gotify', 'Save Gotify', 'حفظ Gotify')}</button>
-              <button className="btn" type="button" onClick={testGotifySettings}>{tr(locale, 'Tester Gotify', 'Test Gotify', 'اختبار Gotify')}</button>
+              <div className="settings-action-row">
+                <button className="btn primary" type="button" onClick={saveGotifySettings}>{tr(locale, 'Enregistrer Gotify', 'Save Gotify', 'حفظ Gotify')}</button>
+                <button className="btn" type="button" onClick={testGotifySettings}>{tr(locale, 'Tester Gotify', 'Test Gotify', 'اختبار Gotify')}</button>
+                <button className="btn" type="button" onClick={refreshGotifySettings}>{tr(locale, 'Recharger', 'Reload', 'إعادة التحميل')}</button>
+              </div>
             </div>
             <p className="small-note">{tr(locale, 'Conseil: sauvegarder puis tester pour valider URL/token.', 'Tip: save then test to validate URL/token.', 'نصيحة: احفظ ثم اختبر للتحقق من الرابط/الرمز.')}</p>
           </div>
@@ -394,7 +456,7 @@ export default function SettingsScreen({
           <div className="form-card settings-focus-card">
             <h2>{tr(locale, 'Import patient (JSON)', 'Patient import (JSON)', 'استيراد المرضى (JSON)')}</h2>
             <p className="small-note">{tr(locale, 'Format attendu: {"patients": [{"registrationNumber": "...", "name": "...", "patientType": "medical", "triageScore": 2}]}', 'Expected format: {"patients": [{"registrationNumber": "...", "name": "...", "patientType": "medical", "triageScore": 2}]}', 'التنسيق المتوقع: {"patients": [{"registrationNumber": "...", "name": "...", "patientType": "medical", "triageScore": 2}]}')}</p>
-            <div className="form-grid">
+            <div className="form-grid compact">
               <label>
                 {tr(locale, 'Source import', 'Import source', 'مصدر الاستيراد')}
                 <input className="form-control" value={patientImportForm.source} type="text" onChange={(event) => setPatientImportForm((current) => ({ ...current, source: event.target.value }))} />
@@ -403,14 +465,16 @@ export default function SettingsScreen({
                 {tr(locale, 'Payload JSON', 'JSON payload', 'بيانات JSON')}
                 <textarea className="form-control" rows="8" value={patientImportForm.json} onChange={(event) => setPatientImportForm((current) => ({ ...current, json: event.target.value }))} />
               </label>
-              <button className="btn primary" type="button" onClick={importPatients}>{tr(locale, 'Importer patients', 'Import patients', 'استيراد المرضى')}</button>
+              <div className="settings-action-row">
+                <button className="btn primary" type="button" onClick={importPatients}>{tr(locale, 'Importer patients', 'Import patients', 'استيراد المرضى')}</button>
+              </div>
             </div>
           </div>
 
           <div className="form-card settings-focus-card">
             <h2>{tr(locale, 'Canaux SMS / WhatsApp', 'SMS / WhatsApp channels', 'قنوات SMS / WhatsApp')}</h2>
             <p className="small-note">{tr(locale, 'Configurer les webhooks de sortie et les destinataires. Chaque envoi enregistre un statut d accusé.', 'Configure outbound webhooks and recipients. Each send stores an acknowledgment status.', 'قم بتكوين webhooks الصادرة والمستلمين. كل إرسال يسجل حالة تأكيد.')}</p>
-            <div className="form-grid">
+            <div className="form-grid compact">
               <label>
                 {tr(locale, 'SMS actif', 'SMS enabled', 'تفعيل SMS')}
                 <select className="form-select" value={alertChannelsForm.sms.enabled ? '1' : '0'} onChange={(event) => setAlertChannelsForm((current) => ({ ...current, sms: { ...current.sms, enabled: event.target.value === '1' } }))}>
@@ -443,13 +507,17 @@ export default function SettingsScreen({
                 <input className="form-control" value={alertChannelsForm.whatsapp.recipient} type="text" placeholder="+212600000000" onChange={(event) => setAlertChannelsForm((current) => ({ ...current, whatsapp: { ...current.whatsapp, recipient: event.target.value } }))} />
               </label>
 
-              <button className="btn primary" type="button" onClick={saveAlertChannelsSettings}>{tr(locale, 'Enregistrer canaux', 'Save channels', 'حفظ القنوات')}</button>
-              <button className="btn" type="button" onClick={testAlertChannelsSettings}>{tr(locale, 'Tester canaux', 'Test channels', 'اختبار القنوات')}</button>
-              <button className="btn" type="button" onClick={() => refreshAlertNotifications({ announce: true })}>{tr(locale, 'Rafraichir accusés', 'Refresh acknowledgments', 'تحديث التأكيدات')}</button>
+              <div className="settings-action-row">
+                <button className="btn primary" type="button" onClick={saveAlertChannelsSettings}>{tr(locale, 'Enregistrer canaux', 'Save channels', 'حفظ القنوات')}</button>
+                <button className="btn" type="button" onClick={testAlertChannelsSettings}>{tr(locale, 'Tester canaux', 'Test channels', 'اختبار القنوات')}</button>
+                <button className="btn" type="button" onClick={refreshAlertChannelsSettings}>{tr(locale, 'Recharger canaux', 'Reload channels', 'إعادة تحميل القنوات')}</button>
+                <button className="btn" type="button" onClick={() => refreshAlertNotifications({ announce: true })}>{tr(locale, 'Rafraichir accusés', 'Refresh acknowledgments', 'تحديث التأكيدات')}</button>
+                <button className="btn" type="button" onClick={acknowledgeAllAlertNotifications}>{tr(locale, 'Tout accuser', 'Acknowledge all', 'تأكيد الكل')}</button>
+              </div>
             </div>
           </div>
 
-          <div className="table-wrap">
+          <div className="table-wrap settings-wide">
             <table className="table table-sm align-middle mb-0">
               <thead>
                 <tr>
@@ -489,18 +557,19 @@ export default function SettingsScreen({
       ) : null}
 
       {activeSection === 'operations' ? (
-        <div className="controls-grid">
+        <div className="settings-panel-grid">
           <div className="form-card">
             <h2>{tr(locale, 'Sauvegarde / restauration', 'Backup / restore', 'النسخ الاحتياطي / الاستعادة')}</h2>
-            <div className="form-grid">
+            <div className="settings-action-row">
               <button className="btn primary" type="button" onClick={createBackup}>{tr(locale, 'Sauvegarde 1 clic', 'One-click backup', 'نسخ احتياطي بنقرة واحدة')}</button>
               <button className="btn" type="button" onClick={restoreLatestBackup}>{tr(locale, 'Restaurer derniere sauvegarde', 'Restore latest backup', 'استعادة آخر نسخة احتياطية')}</button>
               <button className="btn" type="button" onClick={exportAuditCsv}>{tr(locale, 'Exporter audit CSV', 'Export audit CSV', 'تصدير تدقيق CSV')}</button>
+              <button className="btn" type="button" onClick={refreshAuditLogs}>{tr(locale, 'Rafraichir journal', 'Refresh log', 'تحديث السجل')}</button>
             </div>
             <p className="small-note">{tr(locale, 'Derniere sauvegarde', 'Latest backup', 'آخر نسخة احتياطية')}: {lastBackupFile ? escapeText(lastBackupFile) : tr(locale, 'Aucune', 'None', 'لا يوجد')}</p>
           </div>
 
-          <div className="table-wrap">
+          <div className="table-wrap settings-wide">
             <table className="table table-sm align-middle mb-0">
               <thead>
                 <tr>

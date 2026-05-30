@@ -619,6 +619,72 @@ select:focus-visible,
   margin-top: 6px;
 }
 
+.settings-shell {
+  gap: 14px;
+}
+
+.settings-toolbar {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-toolbar-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.settings-toolbar-row h2 {
+  margin: 0;
+}
+
+.settings-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-kpi {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.78);
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+}
+
+.settings-kpi span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.settings-kpi strong {
+  font-size: 1.1rem;
+}
+
+.settings-panel-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.settings-wide {
+  grid-column: 1 / -1;
+}
+
+.settings-stack {
+  display: grid;
+  gap: 10px;
+}
+
 .settings-admin-card h2 {
   margin: 0;
 }
@@ -999,6 +1065,11 @@ tr:last-child td { border-bottom: none; }
   .grid {
     grid-template-columns: 1fr;
   }
+
+  .settings-panel-grid,
+  .settings-kpi-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 760px) {
@@ -1018,6 +1089,12 @@ tr:last-child td { border-bottom: none; }
   .modal-grid,
   .login-card {
     grid-template-columns: 1fr;
+  }
+
+  .settings-toolbar-row,
+  .settings-action-row {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .status-actions {

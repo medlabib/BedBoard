@@ -545,6 +545,32 @@ function App() {
     showSuccess(tr(locale, 'Notification accusee.', 'Notification acknowledged.', 'تم تأكيد الإشعار.'));
   };
 
+  const acknowledgeAllAlertNotifications = async () => {
+    if (!isAdmin) return;
+    const pending = (Array.isArray(alertNotifications) ? alertNotifications : [])
+      .filter((entry) => String(entry.status || '').toLowerCase() !== 'acknowledged');
+    if (!pending.length) {
+      showSuccess(tr(locale, 'Aucune notification en attente.', 'No pending notifications.', 'لا توجد إشعارات معلقة.'));
+      return;
+    }
+    let failed = 0;
+    for (const entry of pending) {
+      const response = await api('/api/admin/integrations/alerts/notifications/ack', {
+        method: 'POST',
+        body: JSON.stringify({ id: Number(entry.id) }),
+      });
+      if (!response.ok) {
+        failed += 1;
+      }
+    }
+    await refreshAlertNotifications({ announce: false });
+    if (failed > 0) {
+      showError(tr(locale, `${failed} accusés ont échoué.`, `${failed} acknowledgments failed.`, `فشل ${failed} من عمليات التأكيد.`));
+      return;
+    }
+    showSuccess(tr(locale, `${pending.length} notifications accusées.`, `${pending.length} notifications acknowledged.`, `تم تأكيد ${pending.length} إشعارًا.`));
+  };
+
   const refreshSecurityConfig = async () => {
     if (!isAdmin) return;
     const response = await api('/api/admin/security/config', { method: 'GET' });
@@ -1617,26 +1643,33 @@ function App() {
               newUser={newUser}
               setNewUser={setNewUser}
               createUser={createUser}
+              refreshUsers={refreshUsers}
               resetPasswordForm={resetPasswordForm}
               setResetPasswordForm={setResetPasswordForm}
               resetUserPassword={resetUserPassword}
+              usersCount={users.length}
               createBackup={createBackup}
               restoreLatestBackup={restoreLatestBackup}
               lastBackupFile={lastBackupFile}
+              refreshAuditLogs={() => refreshAudit(true)}
               gotifyForm={gotifyForm}
               setGotifyForm={setGotifyForm}
               saveGotifySettings={saveGotifySettings}
               testGotifySettings={testGotifySettings}
+              refreshGotifySettings={refreshGotifySettings}
               alertChannelsForm={alertChannelsForm}
               setAlertChannelsForm={setAlertChannelsForm}
               saveAlertChannelsSettings={saveAlertChannelsSettings}
               testAlertChannelsSettings={testAlertChannelsSettings}
+              refreshAlertChannelsSettings={refreshAlertChannelsSettings}
               alertNotifications={alertNotifications}
               refreshAlertNotifications={refreshAlertNotifications}
               acknowledgeAlertNotification={acknowledgeAlertNotification}
+              acknowledgeAllAlertNotifications={acknowledgeAllAlertNotifications}
               securityConfigForm={securityConfigForm}
               setSecurityConfigForm={setSecurityConfigForm}
               saveSecurityConfig={saveSecurityConfig}
+              refreshSecurityConfig={refreshSecurityConfig}
               securityHealth={securityHealth}
               refreshSecurityHealth={refreshSecurityHealth}
               exportAuditCsv={exportAuditCsv}
@@ -1646,6 +1679,7 @@ function App() {
               uiConfigForm={uiConfigForm}
               setUiConfigForm={setUiConfigForm}
               saveUiConfig={saveUiConfig}
+              refreshUIConfig={refreshUIConfig}
               locale={locale}
               renderUsers={renderUsers}
               auditLogs={auditLogs}
