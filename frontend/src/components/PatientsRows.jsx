@@ -1,5 +1,5 @@
 import { triageLevelOf, triageMeta } from '../lib/triage';
-import { patientTypeLabel, triageLabel, tr } from '../lib/i18n';
+import { patientStatusLabel, patientTypeLabel, triageLabel, tr } from '../lib/i18n';
 
 export default function PatientsRows({
   activePatients,
@@ -47,7 +47,7 @@ export default function PatientsRows({
         <td>
           {canViewTriage ? <span className="triage-pill" style={{ background: triage.color }}>{triageLabel(locale, level)}</span> : '-'}
         </td>
-        <td>{escapeText(patient.status || 'arrived')}</td>
+        <td>{patientStatusLabel(locale, patient.status || 'arrived')}</td>
         <td>{patient.bedNumber ? `${escapeText(patient.roomName || tr(locale, 'Chambre', 'Room', 'غرفة'))} - ${escapeText(patient.bedName || `${tr(locale, 'Lit', 'Bed', 'سرير')} ${patient.bedNumber}`)}` : tr(locale, 'Non assigne', 'Unassigned', 'غير مخصص')}</td>
         <td>
           {authenticated ? (

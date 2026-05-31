@@ -48,6 +48,10 @@ const (
 	patientStatusTriaged             = "triaged"
 	patientStatusWaiting             = "waiting"
 	patientStatusAssigned            = "assigned"
+	patientStatusInExam              = "in_exam"
+	patientStatusImaging             = "imaging"
+	patientStatusWaitingResults      = "waiting_results"
+	patientStatusDischargeReady      = "discharge_ready"
 	patientStatusConsulted           = "consulted"
 	patientStatusArchived            = "archived"
 	patientStatusTransferred         = "transferred"
@@ -386,6 +390,15 @@ type statsView struct {
 	AlertBeds              int              `json:"alertBeds"`
 	TotalPatients          int              `json:"totalPatients"`
 	ArchivedPatients       int              `json:"archivedPatients"`
+	ProjectedLoad30        int              `json:"projectedLoad30"`
+	ProjectedLoad60        int              `json:"projectedLoad60"`
+	ProjectedLoad120       int              `json:"projectedLoad120"`
+	ProjectedPressure30    int              `json:"projectedPressure30"`
+	ProjectedPressure60    int              `json:"projectedPressure60"`
+	ProjectedPressure120   int              `json:"projectedPressure120"`
+	ProjectedSLARisk30     int              `json:"projectedSlaRisk30"`
+	ProjectedSLARisk60     int              `json:"projectedSlaRisk60"`
+	ProjectedSLARisk120    int              `json:"projectedSlaRisk120"`
 	ConsultationsByDate    []map[string]any `json:"consultationsByDate"`
 	ConsultationsByHour    []map[string]any `json:"consultationsByHour"`
 	AvgConsultationMinutes float64          `json:"avgConsultationMinutes"`
@@ -462,6 +475,7 @@ func main() {
 	mux.HandleFunc("/api/admin/integrations/alerts/channels/test", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handleAlertChannelsTest)))))
 	mux.HandleFunc("/api/admin/integrations/alerts/notifications", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBRead(app.handleAlertNotifications)))))
 	mux.HandleFunc("/api/admin/integrations/alerts/notifications/ack", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handleAlertNotificationAck)))))
+	mux.HandleFunc("/api/admin/integrations/fhir/export", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBRead(app.handleFHIRExport)))))
 	mux.HandleFunc("/api/integrations/alerts/ack", app.withCORS(app.withDBWrite(app.handleAlertAckByToken)))
 	mux.HandleFunc("/api/admin/integrations/patients/import", app.withCORS(app.requireAuthDB(app.requireAdminDB(app.withDBWrite(app.handlePatientsImport)))))
 	mux.HandleFunc("/api/status", app.withCORS(app.requireAuthDB(app.withDBWrite(app.handleStatus))))

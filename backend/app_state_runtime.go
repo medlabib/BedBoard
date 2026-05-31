@@ -99,6 +99,11 @@ func (a *App) collectState(r *http.Request) (statePayload, error) {
 	var waitToTriageCount int
 	var totalWaitToAssign float64
 	var waitToAssignCount int
+	now := time.Now()
+	windowStart := now.Add(-6 * time.Hour)
+	arrivalsWindow := 0
+	completedWindow := 0
+	activeLoadNow := 0
 	for _, patient := range patients {
 		patientType := normalizePatientType(patient.PatientType)
 		if patientType == "" {
@@ -138,6 +143,18 @@ func (a *App) collectState(r *http.Request) (statePayload, error) {
 		if patient.ArchivedAt != nil {
 			archivedCount++
 		}
+		if patient.ArrivedAt != nil && patient.ArrivedAt.After(windowStart) {
+			arrivalsWindow++
+		}
+		if patient.ConsultedAt != nil && patient.ConsultedAt.After(windowStart) {
+			completedWindow++
+		}
+		if patient.ExitAt != nil && patient.ExitAt.After(windowStart) {
+			completedWindow++
+		}
+		if statusKey := strings.TrimSpace(strings.ToLower(patient.Status)); statusKey != patientStatusArchived && statusKey != patientStatusConsulted && statusKey != patientStatusTransferred && statusKey != patientStatusDeceased {
+			activeLoadNow++
+		}
 		key := strconv.Itoa(patient.TriageScore)
 		stats.TriageByLevel[key]++
 		statusKey := strings.TrimSpace(patient.Status)
@@ -161,7 +178,7 @@ func (a *App) collectState(r *http.Request) (statePayload, error) {
 			}
 		}
 		if patient.TriageScore >= 4 && patient.ArrivedAt != nil && patient.AssignedAt == nil && patient.ConsultedAt == nil {
-			if time.Since(*patient.ArrivedAt).Minutes() > float64(triageSlaMinutes) {
+			if now.Sub(*patient.ArrivedAt).Minutes() > float64(triageSlaMinutes) {
 				stats.TriageSLABreaches++
 			}
 		}
@@ -208,6 +225,49 @@ func (a *App) collectState(r *http.Request) (statePayload, error) {
 	stats.AvgWaitToTriageMinutes = avgWaitToTriage
 	stats.AvgWaitToAssignMinutes = avgWaitToAssign
 	stats.TotalConsultations = consultCount
+	arrivalsRatePerHour := float64(arrivalsWindow) / 6.0
+	completedRatePerHour := float64(completedWindow) / 6.0
+	estimateLoad := func(horizonMinutes float64) int {
+		next := float64(activeLoadNow) + (arrivalsRatePerHour-completedRatePerHour)*(horizonMinutes/60.0)
+		if next < 0 {
+			next = 0
+		}
+		return int(next + 0.5)
+	}
+	estimatePressure := func(load int) int {
+		if stats.TotalBeds <= 0 {
+			return 0
+		}
+		value := int((float64(load) / float64(stats.TotalBeds)) * 100.0)
+		if value < 0 {
+			return 0
+		}
+		if value > 300 {
+			return 300
+		}
+		return value
+	}
+	estimateSLARisk := func(horizonMinutes float64) int {
+		risk := 0
+		for _, patient := range patients {
+			if patient.TriageScore < 4 || patient.ArrivedAt == nil || patient.AssignedAt != nil || patient.ConsultedAt != nil {
+				continue
+			}
+			if now.Sub(*patient.ArrivedAt).Minutes()+horizonMinutes > float64(triageSlaMinutes) {
+				risk++
+			}
+		}
+		return risk
+	}
+	stats.ProjectedLoad30 = estimateLoad(30)
+	stats.ProjectedLoad60 = estimateLoad(60)
+	stats.ProjectedLoad120 = estimateLoad(120)
+	stats.ProjectedPressure30 = estimatePressure(stats.ProjectedLoad30)
+	stats.ProjectedPressure60 = estimatePressure(stats.ProjectedLoad60)
+	stats.ProjectedPressure120 = estimatePressure(stats.ProjectedLoad120)
+	stats.ProjectedSLARisk30 = estimateSLARisk(30)
+	stats.ProjectedSLARisk60 = estimateSLARisk(60)
+	stats.ProjectedSLARisk120 = estimateSLARisk(120)
 	return statePayload{Beds: views, Patients: patientViews, Stats: stats, Authenticated: ok, Username: user.Username, Admin: isAdminLike(user), ServerTime: time.Now().Format(time.RFC3339)}, nil
 }
 

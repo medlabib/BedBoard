@@ -114,6 +114,14 @@ func normalizePatientStatus(value string) string {
 		return patientStatusWaiting
 	case patientStatusAssigned:
 		return patientStatusAssigned
+	case patientStatusInExam:
+		return patientStatusInExam
+	case patientStatusImaging:
+		return patientStatusImaging
+	case patientStatusWaitingResults:
+		return patientStatusWaitingResults
+	case patientStatusDischargeReady:
+		return patientStatusDischargeReady
 	case patientStatusConsulted:
 		return patientStatusConsulted
 	case patientStatusArchived:

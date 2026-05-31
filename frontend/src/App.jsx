@@ -9,7 +9,7 @@ import ReceptionPage from './components/ReceptionPage';
 import SettingsScreen from './components/SettingsScreen';
 import SimpleModal from './components/SimpleModal';
 import StatsScreen from './components/StatsScreen';
-import { isRtlLocale, normalizeLocale, patientTypeLabel, roleLabel, tr } from './lib/i18n';
+import { isRtlLocale, normalizeLocale, patientStatusLabel, patientTypeLabel, roleLabel, tr } from './lib/i18n';
 
 const initialStats = {
   totalBeds: 0,
@@ -41,6 +41,51 @@ const statusMeta = {
 const patientTypeOptions = ['all', 'traumato', 'medical', 'douleurs_thoracique', 'chirurgical', 'urgences_differees'];
 
 const patientTypeSelectableOptions = patientTypeOptions.filter((option) => option !== 'all');
+
+const defaultKeyboardShortcuts = {
+  assignHighest: 'Space',
+  assignOldest: 'Shift+Space',
+  goBeds: 'KeyB',
+  goPatients: 'KeyP',
+  refresh: 'KeyR',
+  help: 'Slash',
+};
+
+const allowedShortcutValues = new Set([
+  'Space',
+  'Shift+Space',
+  'KeyB',
+  'KeyP',
+  'KeyR',
+  'Slash',
+  'KeyG',
+  'KeyH',
+  'KeyJ',
+]);
+
+function normalizeShortcutValue(value, fallback) {
+  const clean = String(value || '').trim();
+  return allowedShortcutValues.has(clean) ? clean : fallback;
+}
+
+function loadKeyboardShortcuts(username) {
+  if (!username) return { ...defaultKeyboardShortcuts };
+  try {
+    const raw = localStorage.getItem(`bedboard_shortcuts_${username}`);
+    const parsed = JSON.parse(raw || '{}');
+    return {
+      assignHighest: normalizeShortcutValue(parsed.assignHighest, defaultKeyboardShortcuts.assignHighest),
+      assignOldest: normalizeShortcutValue(parsed.assignOldest, defaultKeyboardShortcuts.assignOldest),
+      goBeds: normalizeShortcutValue(parsed.goBeds, defaultKeyboardShortcuts.goBeds),
+      goPatients: normalizeShortcutValue(parsed.goPatients, defaultKeyboardShortcuts.goPatients),
+      refresh: normalizeShortcutValue(parsed.refresh, defaultKeyboardShortcuts.refresh),
+      help: normalizeShortcutValue(parsed.help, defaultKeyboardShortcuts.help),
+    };
+  } catch (error) {
+    console.error(error);
+    return { ...defaultKeyboardShortcuts };
+  }
+}
 
 
 function normalizeStatus(value) {
@@ -192,6 +237,9 @@ function App() {
   const [patientImportForm, setPatientImportForm] = useState({ source: 'manual', json: '' });
   const [lastBackupFile, setLastBackupFile] = useState('');
   const [notice, setNotice] = useState({ type: '', text: '' });
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState('');
+  const [keyboardShortcuts, setKeyboardShortcuts] = useState({ ...defaultKeyboardShortcuts });
 
   const isAdmin = user.admin;
   const locale = normalizeLocale(publicUiConfig.locale);
@@ -368,6 +416,11 @@ function App() {
 
   const exportAuditCsv = () => {
     window.location.assign('/api/admin/audit/export');
+  };
+
+  const exportFHIRBundle = () => {
+    if (!isAdmin) return;
+    window.location.assign('/api/admin/integrations/fhir/export');
   };
 
   const refreshPatientEvents = async (registrationNumber) => {
@@ -866,6 +919,19 @@ function App() {
     localStorage.setItem(`bedboard_visible_patient_types_${user.username}`, JSON.stringify(visiblePatientTypes));
   }, [canCustomizePatientTypeVisibility, user.username, visiblePatientTypes]);
 
+  useEffect(() => {
+    if (!authenticated || !user.username) {
+      setKeyboardShortcuts({ ...defaultKeyboardShortcuts });
+      return;
+    }
+    setKeyboardShortcuts(loadKeyboardShortcuts(user.username));
+  }, [authenticated, user.username]);
+
+  useEffect(() => {
+    if (!authenticated || !user.username) return;
+    localStorage.setItem(`bedboard_shortcuts_${user.username}`, JSON.stringify(keyboardShortcuts));
+  }, [authenticated, user.username, keyboardShortcuts]);
+
   const activePatients = useMemo(() => patients.filter((p) => p.status !== 'archived'), [patients]);
   const visiblePatientTypeSet = useMemo(() => new Set(visiblePatientTypes), [visiblePatientTypes]);
   const visiblePatients = useMemo(() => {
@@ -901,6 +967,37 @@ function App() {
     const pool = unseen.length ? unseen : assignmentCandidates;
     return [...pool].sort((a, b) => parsePatientTime(a) - parsePatientTime(b))[0] || null;
   }, [assignmentCandidates]);
+
+  const triageSlaMinutes = useMemo(() => {
+    const raw = Number(securityConfigForm?.triageSlaMinutes);
+    return Number.isFinite(raw) && raw > 0 ? raw : 15;
+  }, [securityConfigForm?.triageSlaMinutes]);
+
+  const waitingMinutes = (patient) => {
+    const now = Date.now();
+    const started = parsePatientTime(patient);
+    if (!Number.isFinite(started) || started === Number.MAX_SAFE_INTEGER) return 0;
+    return Math.max(0, Math.round((now - started) / 60000));
+  };
+
+  const smartPriorityList = useMemo(() => {
+    const candidates = visiblePatients.filter((patient) => String(patient.status || '').toLowerCase() !== 'archived');
+    return candidates.map((patient) => {
+      const triage = triageLevelOf(patient);
+      const wait = waitingMinutes(patient);
+      const notAssignedBoost = patient.bedNumber ? 0 : 6;
+      const slaBoost = triage >= 4 && wait > triageSlaMinutes ? 12 : 0;
+      const score = triage * 10 + Math.min(wait, 45) + notAssignedBoost + slaBoost;
+      return {
+        patient,
+        score,
+        wait,
+        slaRisk: triage >= 4 && wait > triageSlaMinutes,
+      };
+    }).sort((a, b) => b.score - a.score);
+  }, [visiblePatients, triageSlaMinutes]);
+
+  const nextToCall = smartPriorityList[0] || null;
 
   const firstFreeBed = useMemo(() => {
     const freeBeds = beds.filter((bed) => normalizeStatus(bed.status) === 'libre');
@@ -940,7 +1037,121 @@ function App() {
     return true;
   };
 
+  const commandItems = useMemo(() => {
+    const items = [
+      {
+        id: 'nav-beds',
+        label: tr(locale, 'Aller a Lits', 'Go to Beds', 'الانتقال إلى الأسرة'),
+        keywords: 'beds lits',
+        action: () => setScreen('beds'),
+      },
+      {
+        id: 'nav-patients',
+        label: tr(locale, 'Aller a Patients', 'Go to Patients', 'الانتقال إلى المرضى'),
+        keywords: 'patients triage waiting',
+        action: () => setScreen('patients'),
+      },
+      {
+        id: 'refresh-state',
+        label: tr(locale, 'Rafraichir donnees', 'Refresh data', 'تحديث البيانات'),
+        keywords: 'refresh reload',
+        action: async () => {
+          await refreshState();
+          showSuccess(tr(locale, 'Donnees rafraichies.', 'Data refreshed.', 'تم تحديث البيانات.'));
+        },
+      },
+      {
+        id: 'assign-highest',
+        label: tr(locale, 'Affecter triage le plus eleve', 'Assign highest triage', 'تخصيص أعلى فرز'),
+        keywords: 'assign triage highest urgent',
+        action: async () => {
+          if (!firstFreeBed || !highestTriageCandidate?.registrationNumber) return;
+          await assignPatientToBed(highestTriageCandidate.registrationNumber, firstFreeBed.number);
+        },
+      },
+      {
+        id: 'assign-oldest',
+        label: tr(locale, 'Affecter plus ancien non vu', 'Assign oldest unseen', 'تخصيص الأقدم غير المرئي'),
+        keywords: 'assign oldest unseen waiting',
+        action: async () => {
+          if (!firstFreeBed || !oldestUnseenCandidate?.registrationNumber) return;
+          await assignPatientToBed(oldestUnseenCandidate.registrationNumber, firstFreeBed.number);
+        },
+      },
+    ];
+
+    if (isAdmin) {
+      items.push({
+        id: 'nav-settings',
+        label: tr(locale, 'Aller a Parametres', 'Go to Settings', 'الانتقال إلى الإعدادات'),
+        keywords: 'settings admin',
+        action: async () => {
+          setScreen('settings');
+          await Promise.all([
+            refreshUsers(),
+            refreshAudit(true),
+            refreshGotifySettings(),
+            refreshAlertChannelsSettings(),
+            refreshAlertNotifications({ announce: false }),
+            refreshSecurityConfig(),
+            refreshSecurityHealth(),
+            refreshUIConfig(),
+          ]);
+        },
+      });
+    }
+
+    const patientItems = visiblePatients.slice(0, 50).map((patient) => ({
+      id: `patient-${patient.registrationNumber}`,
+      label: `${tr(locale, 'Dossier', 'Case', 'حالة')}: ${patient.registrationNumber} ${patient.name ? `- ${patient.name}` : ''}`,
+      keywords: `${patient.registrationNumber} ${patient.name || ''} ${patient.patientType || ''}`,
+      action: () => {
+        setScreen('patients');
+        setSelectedPatientReg(patient.registrationNumber);
+        refreshPatientEvents(patient.registrationNumber).catch(() => {});
+      },
+    }));
+
+    const bedItems = beds.slice(0, 50).map((bed) => ({
+      id: `bed-${bed.number}`,
+      label: `${tr(locale, 'Lit', 'Bed', 'سرير')} ${bed.number} - ${bed.room || '-'} ${bed.name || ''}`,
+      keywords: `${bed.number} ${bed.room || ''} ${bed.name || ''} ${bed.status || ''}`,
+      action: () => setScreen('beds'),
+    }));
+
+    return [...items, ...patientItems, ...bedItems];
+  }, [
+    locale,
+    isAdmin,
+    visiblePatients,
+    beds,
+    highestTriageCandidate,
+    oldestUnseenCandidate,
+    firstFreeBed,
+  ]);
+
+  const filteredCommandItems = useMemo(() => {
+    const query = String(commandQuery || '').toLowerCase().trim();
+    if (!query) return commandItems.slice(0, 20);
+    return commandItems.filter((item) => {
+      const haystack = `${item.label} ${item.keywords || ''}`.toLowerCase();
+      return haystack.includes(query);
+    }).slice(0, 20);
+  }, [commandItems, commandQuery]);
+
   useEffect(() => {
+    const shortcutMatchesEvent = (event, shortcut) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return false;
+      switch (shortcut) {
+        case 'Space':
+          return event.code === 'Space' && !event.shiftKey;
+        case 'Shift+Space':
+          return event.code === 'Space' && event.shiftKey;
+        default:
+          return event.code === shortcut;
+      }
+    };
+
     const isEditableTarget = (target) => {
       if (!target) return false;
       const tag = String(target.tagName || '').toLowerCase();
@@ -948,44 +1159,87 @@ function App() {
     };
 
     const onKeyDown = (event) => {
-      if (!authenticated || isPatientPage || !canManageBeds || !canManagePatients) return;
+      if (!authenticated) return;
       if (isEditableTarget(event.target)) return;
       if (event.repeat) return;
 
-      if (event.code === 'Space') {
+      if ((event.ctrlKey || event.metaKey) && event.code === 'KeyK') {
         event.preventDefault();
-        const chosen = event.shiftKey ? oldestUnseenCandidate : highestTriageCandidate;
+        setCommandPaletteOpen((current) => !current);
+        if (!commandPaletteOpen) {
+          setCommandQuery('');
+        }
+        return;
+      }
+
+      if (commandPaletteOpen) {
+        if (event.code === 'Escape') {
+          event.preventDefault();
+          setCommandPaletteOpen(false);
+          return;
+        }
+        if (event.code === 'Enter' && filteredCommandItems.length) {
+          event.preventDefault();
+          const action = filteredCommandItems[0]?.action;
+          setCommandPaletteOpen(false);
+          if (action) {
+            Promise.resolve(action()).catch(() => {});
+          }
+          return;
+        }
+      }
+
+      if (isPatientPage || !canManageBeds || !canManagePatients) return;
+
+      if (shortcutMatchesEvent(event, keyboardShortcuts.assignHighest)) {
+        event.preventDefault();
         if (!firstFreeBed) {
           showError(tr(locale, 'Aucun lit libre pour affectation rapide.', 'No free bed for quick assignment.', 'لا يوجد سرير شاغر للتخصيص السريع.'));
           return;
         }
-        if (!chosen?.registrationNumber) {
+        if (!highestTriageCandidate?.registrationNumber) {
           showError(tr(locale, 'Aucun dossier disponible dans la categorie selectionnee.', 'No record available in selected category.', 'لا توجد حالة متاحة في الفئة المحددة.'));
           return;
         }
-        const modeLabel = event.shiftKey
-          ? tr(locale, 'plus ancien non vu', 'oldest unseen', 'الأقدم غير المرئي')
-          : tr(locale, 'triage le plus eleve', 'highest triage', 'أعلى فرز');
-        assignPatientToBed(chosen.registrationNumber, firstFreeBed.number).then((ok) => {
+        const modeLabel = tr(locale, 'triage le plus eleve', 'highest triage', 'أعلى فرز');
+        assignPatientToBed(highestTriageCandidate.registrationNumber, firstFreeBed.number).then((ok) => {
           if (!ok) return;
           showSuccess(`${tr(locale, 'Raccourci applique', 'Shortcut applied', 'تم تطبيق الاختصار')} (${modeLabel})`);
         }).catch(() => {});
         return;
       }
 
-      if (event.key === 'b' || event.key === 'B') {
+      if (shortcutMatchesEvent(event, keyboardShortcuts.assignOldest)) {
+        event.preventDefault();
+        if (!firstFreeBed) {
+          showError(tr(locale, 'Aucun lit libre pour affectation rapide.', 'No free bed for quick assignment.', 'لا يوجد سرير شاغر للتخصيص السريع.'));
+          return;
+        }
+        if (!oldestUnseenCandidate?.registrationNumber) {
+          showError(tr(locale, 'Aucun dossier disponible dans la categorie selectionnee.', 'No record available in selected category.', 'لا توجد حالة متاحة في الفئة المحددة.'));
+          return;
+        }
+        const modeLabel = tr(locale, 'plus ancien non vu', 'oldest unseen', 'الأقدم غير المرئي');
+        assignPatientToBed(oldestUnseenCandidate.registrationNumber, firstFreeBed.number).then((ok) => {
+          if (!ok) return;
+          showSuccess(`${tr(locale, 'Raccourci applique', 'Shortcut applied', 'تم تطبيق الاختصار')} (${modeLabel})`);
+        }).catch(() => {});
+        return;
+      }
+
+      if (shortcutMatchesEvent(event, keyboardShortcuts.goBeds)) {
         event.preventDefault();
         setScreen('beds');
         return;
       }
 
-      if (event.key === 'p' || event.key === 'P') {
+      if (shortcutMatchesEvent(event, keyboardShortcuts.goPatients)) {
         event.preventDefault();
         setScreen('patients');
         return;
       }
 
-      if (event.key === 'r' || event.key === 'R') {
+      if (shortcutMatchesEvent(event, keyboardShortcuts.refresh)) {
         event.preventDefault();
         refreshState().then(() => {
           showSuccess(tr(locale, 'Donnees rafraichies.', 'Data refreshed.', 'تم تحديث البيانات.'));
@@ -993,13 +1247,13 @@ function App() {
         return;
       }
 
-      if (event.key === '?') {
+      if (shortcutMatchesEvent(event, keyboardShortcuts.help)) {
         event.preventDefault();
         showSuccess(tr(
           locale,
-          'Raccourcis: Espace=triage max, Shift+Espace=plus ancien non vu, B=Lits, P=Patients, R=Rafraichir.',
-          'Shortcuts: Space=highest triage, Shift+Space=oldest unseen, B=Beds, P=Patients, R=Refresh.',
-          'الاختصارات: مسافة=أعلى فرز، Shift+مسافة=الأقدم غير المرئي، B=الأسرة، P=المرضى، R=تحديث.'
+          'Raccourcis actifs: triage max, plus ancien non vu, navigation Lits/Patients, rafraichir, palette Cmd/Ctrl+K.',
+          'Active shortcuts: highest triage, oldest unseen, Beds/Patients navigation, refresh, palette Cmd/Ctrl+K.',
+          'الاختصارات النشطة: أعلى فرز، الأقدم غير المرئي، تنقل الأسرة/المرضى، تحديث، لوحة الأوامر Ctrl/Cmd+K.'
         ));
       }
     };
@@ -1014,6 +1268,9 @@ function App() {
     firstFreeBed,
     highestTriageCandidate,
     oldestUnseenCandidate,
+    commandPaletteOpen,
+    filteredCommandItems,
+    keyboardShortcuts,
     locale,
   ]);
 
@@ -1468,6 +1725,41 @@ function App() {
         </div>
       ) : null}
 
+      {commandPaletteOpen ? (
+        <div className="modal-backdrop open" role="dialog" aria-modal="true">
+          <div className="modal section-card command-palette-modal">
+            <h2>{tr(locale, 'Palette de commandes', 'Command palette', 'لوحة الأوامر')}</h2>
+            <input
+              className="form-control"
+              autoFocus
+              value={commandQuery}
+              placeholder={tr(locale, 'Rechercher dossier, lit, action...', 'Search case, bed, action...', 'ابحث عن حالة أو سرير أو إجراء...')}
+              onChange={(event) => setCommandQuery(event.target.value)}
+            />
+            <div className="command-palette-list">
+              {filteredCommandItems.length ? filteredCommandItems.map((item, index) => (
+                <button
+                  key={item.id}
+                  className={`command-palette-item ${index === 0 ? 'primary' : ''}`}
+                  type="button"
+                  onClick={() => {
+                    setCommandPaletteOpen(false);
+                    Promise.resolve(item.action()).catch(() => {});
+                  }}
+                >
+                  {item.label}
+                </button>
+              )) : (
+                <div className="empty">{tr(locale, 'Aucun resultat.', 'No results.', 'لا توجد نتائج.')}</div>
+              )}
+            </div>
+            <div className="modal-actions">
+              <button className="btn" type="button" onClick={() => setCommandPaletteOpen(false)}>{tr(locale, 'Fermer', 'Close', 'إغلاق')}</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div className="shell">
         <div className="hero">
           <div className="brand-card">
@@ -1599,6 +1891,34 @@ function App() {
                     <span className="patient-priority-chip warn">{tr(locale, 'Non assignes', 'Unassigned', 'غير مخصصين')}: {filteredPatients.filter((patient) => !patient.bedNumber).length}</span>
                     <span className="patient-priority-chip danger">{tr(locale, 'Triage critique', 'Critical triage', 'فرز حرج')}: {filteredPatients.filter((patient) => triageLevelOf(patient) >= 3).length}</span>
                   </div>
+                  <div className="form-card" style={{ marginTop: 8 }}>
+                    <h3>{tr(locale, 'Priorisation intelligente', 'Smart prioritization', 'الأولوية الذكية')}</h3>
+                    {nextToCall ? (
+                      <>
+                        <p className="small-note">
+                          {tr(locale, 'Prochain a appeler', 'Next to call', 'التالي للنداء')}: {nextToCall.patient.registrationNumber} - {escapeText(nextToCall.patient.name || '-')}
+                          {' | '}{tr(locale, 'Score', 'Score', 'النقاط')}: {nextToCall.score}
+                          {' | '}{tr(locale, 'Attente', 'Waiting', 'الانتظار')}: {nextToCall.wait} min
+                          {nextToCall.slaRisk ? ` | ${tr(locale, 'Risque SLA', 'SLA risk', 'خطر SLA')}` : ''}
+                        </p>
+                        <div className="settings-action-row">
+                          <button className="btn" type="button" onClick={() => {
+                            setScreen('patients');
+                            setSelectedPatientReg(nextToCall.patient.registrationNumber);
+                            setNewPatient((current) => ({
+                              ...current,
+                              registrationNumber: nextToCall.patient.registrationNumber,
+                              name: nextToCall.patient.name || current.name,
+                              status: nextToCall.patient.status || current.status,
+                            }));
+                            refreshPatientEvents(nextToCall.patient.registrationNumber).catch(() => {});
+                          }}>{tr(locale, 'Charger ce dossier', 'Load this case', 'تحميل هذه الحالة')}</button>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="small-note">{tr(locale, 'Aucune priorite disponible.', 'No priority candidate available.', 'لا توجد أولوية متاحة.')}</p>
+                    )}
+                  </div>
                   {canCustomizePatientTypeVisibility ? (
                     <div className="patient-priority-row" style={{ marginTop: 8 }}>
                       {patientTypeSelectableOptions.map((option) => (
@@ -1661,13 +1981,17 @@ function App() {
                     <label>
                       {tr(locale, 'Statut patient', 'Patient status', 'حالة المريض')}
                       <select className="form-select" value={newPatient.status} onChange={(event) => setNewPatient((current) => ({ ...current, status: event.target.value }))}>
-                        <option value="arrived">arrived</option>
-                        <option value="triaged">triaged</option>
-                        <option value="waiting">waiting</option>
-                        <option value="assigned">assigned</option>
-                        <option value="consulted">consulted</option>
-                        <option value="transferred">transferred</option>
-                        <option value="deceased">deceased</option>
+                        <option value="arrived">{patientStatusLabel(locale, 'arrived')}</option>
+                        <option value="triaged">{patientStatusLabel(locale, 'triaged')}</option>
+                        <option value="waiting">{patientStatusLabel(locale, 'waiting')}</option>
+                        <option value="assigned">{patientStatusLabel(locale, 'assigned')}</option>
+                        <option value="in_exam">{patientStatusLabel(locale, 'in_exam')}</option>
+                        <option value="imaging">{patientStatusLabel(locale, 'imaging')}</option>
+                        <option value="waiting_results">{patientStatusLabel(locale, 'waiting_results')}</option>
+                        <option value="discharge_ready">{patientStatusLabel(locale, 'discharge_ready')}</option>
+                        <option value="consulted">{patientStatusLabel(locale, 'consulted')}</option>
+                        <option value="transferred">{patientStatusLabel(locale, 'transferred')}</option>
+                        <option value="deceased">{patientStatusLabel(locale, 'deceased')}</option>
                       </select>
                     </label>
                     <label>
@@ -1782,6 +2106,8 @@ function App() {
               setPasswordForm={setPasswordForm}
               changeOwnPassword={changeOwnPassword}
               user={user}
+              keyboardShortcuts={keyboardShortcuts}
+              setKeyboardShortcuts={setKeyboardShortcuts}
               locale={locale}
             />
           ) : null}
@@ -1821,6 +2147,7 @@ function App() {
               securityHealth={securityHealth}
               refreshSecurityHealth={refreshSecurityHealth}
               exportAuditCsv={exportAuditCsv}
+              exportFHIRBundle={exportFHIRBundle}
               patientImportForm={patientImportForm}
               setPatientImportForm={setPatientImportForm}
               importPatients={importPatients}

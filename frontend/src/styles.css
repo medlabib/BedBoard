@@ -962,6 +962,34 @@ tr:last-child td { border-bottom: none; }
   flex-wrap: wrap;
 }
 
+.command-palette-modal {
+  width: min(780px, 100%);
+}
+
+.command-palette-list {
+  display: grid;
+  gap: 8px;
+  max-height: 360px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.command-palette-item {
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.86);
+  color: var(--text);
+  font-weight: 600;
+  padding: 10px 12px;
+}
+
+.command-palette-item.primary {
+  border-color: rgba(127, 167, 212, 0.7);
+  background: rgba(127, 167, 212, 0.16);
+}
+
 .small-note {
   color: var(--muted);
   font-size: 0.92rem;

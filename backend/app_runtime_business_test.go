@@ -274,3 +274,61 @@ func TestHandlePatientEventsProvidesFallbackTimeline(t *testing.T) {
 		t.Fatalf("expected patient.arrived fallback event")
 	}
 }
+
+func TestHandlePatientsAcceptsDetailedWorkflowStatus(t *testing.T) {
+	app, cleanup := setupTestApp(t)
+	defer cleanup()
+
+	token := createAdminSession(t, app)
+	req := newAuthedJSONRequest(t, http.MethodPost, "/api/patients", token, map[string]any{
+		"registrationNumber": "WF-001",
+		"name":               "Workflow Patient",
+		"patientType":        patientTypeMedical,
+		"triageScore":        2,
+		"status":             patientStatusInExam,
+	})
+	rr := httptest.NewRecorder()
+	app.handlePatients(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var patient Patient
+	if err := app.db.Where("registration_number = ?", "WF-001").First(&patient).Error; err != nil {
+		t.Fatalf("reload patient: %v", err)
+	}
+	if patient.Status != patientStatusInExam {
+		t.Fatalf("expected status %q, got %q", patientStatusInExam, patient.Status)
+	}
+}
+
+func TestHandleFHIRExportReturnsBundle(t *testing.T) {
+	app, cleanup := setupTestApp(t)
+	defer cleanup()
+
+	if err := app.db.Create(&Patient{
+		RegistrationNumber: "FHIR-001",
+		Name:               "FHIR Patient",
+		PatientType:        patientTypeMedical,
+		TriageScore:        2,
+		Status:             patientStatusWaiting,
+	}).Error; err != nil {
+		t.Fatalf("create patient: %v", err)
+	}
+
+	token := createAdminSession(t, app)
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/integrations/fhir/export", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
+	rr := httptest.NewRecorder()
+
+	app.withDBRead(app.requireAuthDB(app.requireAdminDB(app.handleFHIRExport)))(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Header().Get("Content-Type"), "application/fhir+json") {
+		t.Fatalf("expected fhir content type, got %q", rr.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(rr.Body.String(), "\"resourceType\":\"Bundle\"") {
+		t.Fatalf("expected Bundle resource in response")
+	}
+}

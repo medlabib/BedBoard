@@ -34,6 +34,15 @@ export default function StatsScreen({ stats, locale }) {
           <div className="stat"><span>{tr(locale, 'Attente moyenne triage (min)', 'Avg wait to triage (min)', 'متوسط انتظار الفرز (دقيقة)')}</span><strong>{Math.round(stats.avgWaitToTriageMinutes) || 0}</strong></div>
           <div className="stat"><span>{tr(locale, 'Attente moyenne assignation (min)', 'Avg wait to assignment (min)', 'متوسط انتظار التخصيص (دقيقة)')}</span><strong>{Math.round(stats.avgWaitToAssignMinutes) || 0}</strong></div>
           <div className="stat"><span>{tr(locale, 'Breach SLA triage', 'Triage SLA breaches', 'تجاوزات SLA للفرز')}</span><strong>{stats.triageSlaBreaches || 0}</strong></div>
+          <div className="stat"><span>{tr(locale, 'Charge proj. 30 min', 'Projected load 30 min', 'الحمل المتوقع 30 دقيقة')}</span><strong>{stats.projectedLoad30 || 0}</strong></div>
+          <div className="stat"><span>{tr(locale, 'Charge proj. 60 min', 'Projected load 60 min', 'الحمل المتوقع 60 دقيقة')}</span><strong>{stats.projectedLoad60 || 0}</strong></div>
+          <div className="stat"><span>{tr(locale, 'Charge proj. 120 min', 'Projected load 120 min', 'الحمل المتوقع 120 دقيقة')}</span><strong>{stats.projectedLoad120 || 0}</strong></div>
+          <div className="stat"><span>{tr(locale, 'Pression lits 30 min', 'Bed pressure 30 min', 'ضغط الأسرة 30 دقيقة')}</span><strong>{stats.projectedPressure30 || 0}%</strong></div>
+          <div className="stat"><span>{tr(locale, 'Pression lits 60 min', 'Bed pressure 60 min', 'ضغط الأسرة 60 دقيقة')}</span><strong>{stats.projectedPressure60 || 0}%</strong></div>
+          <div className="stat"><span>{tr(locale, 'Pression lits 120 min', 'Bed pressure 120 min', 'ضغط الأسرة 120 دقيقة')}</span><strong>{stats.projectedPressure120 || 0}%</strong></div>
+          <div className="stat"><span>{tr(locale, 'Risque SLA 30 min', 'SLA risk 30 min', 'مخاطر SLA خلال 30 دقيقة')}</span><strong>{stats.projectedSlaRisk30 || 0}</strong></div>
+          <div className="stat"><span>{tr(locale, 'Risque SLA 60 min', 'SLA risk 60 min', 'مخاطر SLA خلال 60 دقيقة')}</span><strong>{stats.projectedSlaRisk60 || 0}</strong></div>
+          <div className="stat"><span>{tr(locale, 'Risque SLA 120 min', 'SLA risk 120 min', 'مخاطر SLA خلال 120 دقيقة')}</span><strong>{stats.projectedSlaRisk120 || 0}</strong></div>
           <div className="stat"><span>{tr(locale, 'Lits en alerte', 'Beds in alert', 'الأسرة في حالة إنذار')}</span><strong>{stats.alertBeds || 0}</strong></div>
           <div className="stat"><span>Triage 0</span><strong>{stats.triageByLevel?.['0'] || 0}</strong></div>
           <div className="stat"><span>Triage 1</span><strong>{stats.triageByLevel?.['1'] || 0}</strong></div>

@@ -37,6 +37,7 @@ export default function SettingsScreen({
   securityHealth,
   refreshSecurityHealth,
   exportAuditCsv,
+  exportFHIRBundle,
   patientImportForm,
   setPatientImportForm,
   importPatients,
@@ -571,6 +572,7 @@ export default function SettingsScreen({
               <button className="btn primary" type="button" onClick={createBackup}>{tr(locale, 'Sauvegarde 1 clic', 'One-click backup', 'نسخ احتياطي بنقرة واحدة')}</button>
               <button className="btn" type="button" onClick={restoreLatestBackup}>{tr(locale, 'Restaurer derniere sauvegarde', 'Restore latest backup', 'استعادة آخر نسخة احتياطية')}</button>
               <button className="btn" type="button" onClick={exportAuditCsv}>{tr(locale, 'Exporter audit CSV', 'Export audit CSV', 'تصدير تدقيق CSV')}</button>
+              <button className="btn" type="button" onClick={exportFHIRBundle}>{tr(locale, 'Exporter bundle FHIR', 'Export FHIR bundle', 'تصدير حزمة FHIR')}</button>
               <button className="btn" type="button" onClick={refreshAuditLogs}>{tr(locale, 'Rafraichir journal', 'Refresh log', 'تحديث السجل')}</button>
             </div>
             <p className="small-note">{tr(locale, 'Derniere sauvegarde', 'Latest backup', 'آخر نسخة احتياطية')}: {lastBackupFile ? escapeText(lastBackupFile) : tr(locale, 'Aucune', 'None', 'لا يوجد')}</p>

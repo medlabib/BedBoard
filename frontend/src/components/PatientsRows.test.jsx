@@ -48,7 +48,7 @@ describe('PatientsRows', () => {
       </table>,
     );
 
-    expect(screen.getByText('triaged')).toBeInTheDocument();
+    expect(screen.getByText('Triaged')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('P-001'));
 
