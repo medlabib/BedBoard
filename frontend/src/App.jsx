@@ -186,14 +186,15 @@ function App() {
   const [authForm, setAuthForm] = useState({ username: 'admin', password: '' });
   const [authMessage, setAuthMessage] = useState('');
   const [connectionState, setConnectionState] = useState('');
-  const [uiConfigForm, setUiConfigForm] = useState({ appName: 'BedBoard', logoDataUrl: '', locale: 'fr', patientViewIdentityMode: 'name', clearLogo: false });
-  const [publicUiConfig, setPublicUiConfig] = useState({ appName: 'BedBoard', logoDataUrl: '', locale: 'fr', patientViewIdentityMode: 'name' });
+  const [uiConfigForm, setUiConfigForm] = useState({ appName: 'BedBoard', logoDataUrl: '', locale: 'fr', patientViewIdentityMode: 'name', patientCallLanguage: 'both', clearLogo: false });
+  const [publicUiConfig, setPublicUiConfig] = useState({ appName: 'BedBoard', logoDataUrl: '', locale: 'fr', patientViewIdentityMode: 'name', patientCallLanguage: 'both' });
   const [newBed, setNewBed] = useState({ number: '', room: '', name: '', type: 'standard' });
   const [newPatient, setNewPatient] = useState({ registrationNumber: '', name: '', patientType: 'medical', bedNumber: '', triageScore: '0', status: 'arrived', reason: '', destination: '', outcome: '' });
   const [patientTypeFilter, setPatientTypeFilter] = useState(() => loadPatientTypeFilter());
   const [visiblePatientTypes, setVisiblePatientTypes] = useState(() => patientTypeSelectableOptions.map((option) => option));
   const [newUser, setNewUser] = useState({ username: '', password: '', role: 'user' });
   const [assignByBed, setAssignByBed] = useState({});
+  const [selectedBedNumber, setSelectedBedNumber] = useState(null);
   const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [resetPasswordForm, setResetPasswordForm] = useState({ username: '', newPassword: '', confirmPassword: '' });
   const [gotifyForm, setGotifyForm] = useState({ enabled: false, url: '', token: '', priority: 8, tokenConfigured: false, clearToken: false });
@@ -331,6 +332,7 @@ function App() {
       logoDataUrl: data.logoDataUrl || '',
       locale: normalizeLocale(data.locale),
       patientViewIdentityMode: String(data.patientViewIdentityMode || 'name') === 'number' ? 'number' : 'name',
+      patientCallLanguage: ['ar', 'fr', 'en', 'both'].includes(String(data.patientCallLanguage || '').toLowerCase()) ? String(data.patientCallLanguage).toLowerCase() : 'both',
     });
   };
 
@@ -347,6 +349,7 @@ function App() {
       logoDataUrl: data.logoDataUrl || '',
       locale: normalizeLocale(data.locale),
       patientViewIdentityMode: String(data.patientViewIdentityMode || 'name') === 'number' ? 'number' : 'name',
+      patientCallLanguage: ['ar', 'fr', 'en', 'both'].includes(String(data.patientCallLanguage || '').toLowerCase()) ? String(data.patientCallLanguage).toLowerCase() : 'both',
       clearLogo: false,
     });
   };
@@ -360,6 +363,7 @@ function App() {
         logoDataUrl: uiConfigForm.logoDataUrl,
         locale: uiConfigForm.locale,
         patientViewIdentityMode: uiConfigForm.patientViewIdentityMode,
+        patientCallLanguage: uiConfigForm.patientCallLanguage,
         clearLogo: Boolean(uiConfigForm.clearLogo),
       }),
     });
@@ -1005,6 +1009,15 @@ function App() {
     return [...freeBeds].sort((a, b) => Number(a.number) - Number(b.number))[0];
   }, [beds]);
 
+  const selectedBedPatient = useMemo(() => {
+    if (!selectedBedNumber) return null;
+    const selectedBed = beds.find((bed) => Number(bed.number) === Number(selectedBedNumber));
+    if (!selectedBed) return null;
+    return activePatients.find((patient) => Number(patient.bedNumber) === Number(selectedBed.number))
+      || activePatients.find((patient) => patient.registrationNumber === selectedBed.patientRegistration)
+      || null;
+  }, [selectedBedNumber, beds, activePatients]);
+
   const toggleVisiblePatientType = (patientType) => {
     setVisiblePatientTypes((current) => {
       if (current.includes(patientType)) {
@@ -1034,6 +1047,32 @@ function App() {
     }
     setAssignByBed((current) => ({ ...current, [bedNum]: '' }));
     showSuccess(`${tr(locale, 'Affectation terminee', 'Assignment completed', 'اكتمل التخصيص')}: ${reg} -> ${tr(locale, 'lit', 'bed', 'سرير')} ${bedNum}.`);
+    return true;
+  };
+
+  const updatePatientStatusFromBed = async (registrationNumber, nextStatus, bedNumber) => {
+    if (!canManageBeds || !canManagePatients) return false;
+    const reg = String(registrationNumber || '').trim();
+    if (!reg) return false;
+    const selectedPatient = activePatients.find((p) => p.registrationNumber === reg);
+    const response = await api('/api/patients', {
+      method: 'POST',
+      body: JSON.stringify({
+        registrationNumber: reg,
+        name: selectedPatient?.name || '',
+        status: nextStatus,
+      }),
+    });
+    if (!response.ok) {
+      showError(await readErrorMessage(response, tr(locale, 'Mise a jour statut patient impossible.', 'Unable to update patient status.', 'تعذر تحديث حالة المريض.')));
+      return false;
+    }
+    const statusLabels = {
+      imaging: tr(locale, 'Imagerie', 'Imaging', 'تصوير'),
+      waiting_results: tr(locale, 'Bilan en attente', 'Waiting results', 'بانتظار النتائج'),
+      discharge_ready: tr(locale, 'Sortant', 'Discharge ready', 'جاهز للخروج'),
+    };
+    showSuccess(`${tr(locale, 'Statut mis a jour', 'Status updated', 'تم تحديث الحالة')}: ${reg} -> ${statusLabels[nextStatus] || nextStatus}${bedNumber ? ` (${tr(locale, 'lit', 'bed', 'سرير')} ${bedNumber})` : ''}.`);
     return true;
   };
 
@@ -1191,6 +1230,24 @@ function App() {
 
       if (isPatientPage || !canManageBeds || !canManagePatients) return;
 
+      if (screen === 'beds' && selectedBedPatient?.registrationNumber) {
+        if (event.key === 'i' || event.key === 'I') {
+          event.preventDefault();
+          updatePatientStatusFromBed(selectedBedPatient.registrationNumber, 'imaging', selectedBedNumber).catch(() => {});
+          return;
+        }
+        if (event.key === 'b' || event.key === 'B') {
+          event.preventDefault();
+          updatePatientStatusFromBed(selectedBedPatient.registrationNumber, 'waiting_results', selectedBedNumber).catch(() => {});
+          return;
+        }
+        if (event.key === 's' || event.key === 'S') {
+          event.preventDefault();
+          updatePatientStatusFromBed(selectedBedPatient.registrationNumber, 'discharge_ready', selectedBedNumber).catch(() => {});
+          return;
+        }
+      }
+
       if (shortcutMatchesEvent(event, keyboardShortcuts.assignHighest)) {
         event.preventDefault();
         if (!firstFreeBed) {
@@ -1251,9 +1308,9 @@ function App() {
         event.preventDefault();
         showSuccess(tr(
           locale,
-          'Raccourcis actifs: triage max, plus ancien non vu, navigation Lits/Patients, rafraichir, palette Cmd/Ctrl+K.',
-          'Active shortcuts: highest triage, oldest unseen, Beds/Patients navigation, refresh, palette Cmd/Ctrl+K.',
-          'الاختصارات النشطة: أعلى فرز، الأقدم غير المرئي، تنقل الأسرة/المرضى، تحديث، لوحة الأوامر Ctrl/Cmd+K.'
+          'Raccourcis actifs: Espace/Shift+Espace affectation, I imagerie, B bilan, S sortant (sur lit selectionne), navigation Lits/Patients, rafraichir, palette Cmd/Ctrl+K.',
+          'Active shortcuts: Space/Shift+Space assignment, I imaging, B results, S discharge-ready (on selected bed), Beds/Patients navigation, refresh, palette Cmd/Ctrl+K.',
+          'الاختصارات النشطة: مسافة/Shift+مسافة للتخصيص، I للتصوير، B للتحاليل، S للجاهزية للخروج (على السرير المحدد)، تنقل الأسرة/المرضى، تحديث، لوحة الأوامر Ctrl/Cmd+K.'
         ));
       }
     };
@@ -1268,6 +1325,9 @@ function App() {
     firstFreeBed,
     highestTriageCandidate,
     oldestUnseenCandidate,
+    selectedBedPatient,
+    selectedBedNumber,
+    screen,
     commandPaletteOpen,
     filteredCommandItems,
     keyboardShortcuts,
@@ -1858,9 +1918,12 @@ function App() {
                   normalizeStatus={normalizeStatus}
                   escapeText={escapeText}
                   canManageBeds={canManageBeds}
+                  canManagePatients={canManagePatients}
                   isAdmin={isAdmin}
                   assignByBed={assignByBed}
                   setAssignByBed={setAssignByBed}
+                  selectedBedNumber={selectedBedNumber}
+                  setSelectedBedNumber={setSelectedBedNumber}
                   activePatients={activePatients}
                   assignablePatients={visiblePatients}
                   bedEdits={bedEdits}
@@ -1871,6 +1934,7 @@ function App() {
                   readErrorMessage={readErrorMessage}
                   setConfirm={setConfirm}
                   assignPatientToBed={assignPatientToBed}
+                  updatePatientStatusFromBed={updatePatientStatusFromBed}
                   locale={locale}
                 />
               </div>

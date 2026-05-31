@@ -7,9 +7,12 @@ export default function BedsGrid({
   normalizeStatus,
   escapeText,
   canManageBeds,
+  canManagePatients,
   isAdmin,
   assignByBed,
   setAssignByBed,
+  selectedBedNumber,
+  setSelectedBedNumber,
   activePatients,
   assignablePatients,
   bedEdits,
@@ -20,6 +23,7 @@ export default function BedsGrid({
   readErrorMessage,
   setConfirm,
   assignPatientToBed,
+  updatePatientStatusFromBed,
   locale,
 }) {
   if (!beds.length) {
@@ -44,8 +48,9 @@ export default function BedsGrid({
     return (
       <article
         key={bed.number}
-        className={`card status-${statusKey}`}
+        className={`card status-${statusKey} ${Number(selectedBedNumber) === Number(bed.number) ? 'selected' : ''}`}
         style={{ '--status-color': meta.color, '--status-soft': meta.soft }}
+        onClick={() => setSelectedBedNumber?.(bed.number)}
       >
         <div className="card-head">
           <div>
@@ -61,6 +66,7 @@ export default function BedsGrid({
           <strong>{tr(locale, 'Patient', 'Patient', 'المريض')}</strong>
           <span>{patientLine}</span>
           {assignedPatient ? <span className="triage-pill" style={{ background: triage.color }}>{tr(locale, 'Triage', 'Triage', 'الفرز')} {triageLabel(locale, triageLevel)}</span> : null}
+          {assignedPatient?.status ? <span className="small-note">{tr(locale, 'Statut', 'Status', 'الحالة')}: {String(assignedPatient.status)}</span> : null}
         </div>
         <div className="action-row">
           <div className="status-actions">
@@ -87,6 +93,40 @@ export default function BedsGrid({
               </button>
             ))}
           </div>
+          {canManageBeds && canManagePatients && assignedPatient?.registrationNumber ? (
+            <div className="status-actions patient-workflow-actions">
+              <button
+                className="mini-btn"
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  updatePatientStatusFromBed?.(assignedPatient.registrationNumber, 'imaging', bed.number).catch(() => {});
+                }}
+              >
+                {tr(locale, 'Imagerie (I)', 'Imaging (I)', 'تصوير (I)')}
+              </button>
+              <button
+                className="mini-btn"
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  updatePatientStatusFromBed?.(assignedPatient.registrationNumber, 'waiting_results', bed.number).catch(() => {});
+                }}
+              >
+                {tr(locale, 'Bilan (B)', 'Results (B)', 'تحاليل (B)')}
+              </button>
+              <button
+                className="mini-btn"
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  updatePatientStatusFromBed?.(assignedPatient.registrationNumber, 'discharge_ready', bed.number).catch(() => {});
+                }}
+              >
+                {tr(locale, 'Sortant (S)', 'Discharge (S)', 'خروج (S)')}
+              </button>
+            </div>
+          ) : null}
           {isAdmin ? (
             <button
               className="mini-btn"

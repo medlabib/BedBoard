@@ -159,6 +159,15 @@ export default function SettingsScreen({
                 </select>
               </label>
               <label>
+                {tr(locale, 'Langue appel patient', 'Patient calling language', 'لغة نداء المريض')}
+                <select className="form-select" value={uiConfigForm.patientCallLanguage || 'both'} onChange={(event) => setUiConfigForm((current) => ({ ...current, patientCallLanguage: event.target.value }))}>
+                  <option value="both">{tr(locale, 'Bilingue (Ar + Fr)', 'Bilingual (Ar + Fr)', 'ثنائي اللغة (عربي + فرنسي)')}</option>
+                  <option value="ar">{tr(locale, 'Arabe', 'Arabic', 'العربية')}</option>
+                  <option value="fr">{tr(locale, 'Francais', 'French', 'الفرنسية')}</option>
+                  <option value="en">{tr(locale, 'Anglais', 'English', 'الإنجليزية')}</option>
+                </select>
+              </label>
+              <label>
                 {tr(locale, 'Logo (URL data image/* base64)', 'Logo (image/* data URL base64)', 'الشعار (رابط بيانات image/* base64)')}
                 <input className="form-control" value={uiConfigForm.logoDataUrl} type="text" placeholder="data:image/png;base64,..." onChange={(event) => setUiConfigForm((current) => ({ ...current, logoDataUrl: event.target.value }))} />
               </label>

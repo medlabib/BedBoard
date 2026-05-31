@@ -6,7 +6,7 @@
 A local-first emergency board for bed occupancy and patient flow.
 
 <p align="center">
-  <img alt="Release Channel" src="https://img.shields.io/badge/Release%20Channel-beta--1.0.6-8FAADC?style=flat-square" />
+  <img alt="Release Channel" src="https://img.shields.io/badge/Release%20Channel-beta--1.0.7-8FAADC?style=flat-square" />
   <img alt="Legacy Tags" src="https://img.shields.io/badge/Legacy%20Tags-alpha--v*-B5C7A4?style=flat-square" />
   <img alt="Backend Coverage" src="https://img.shields.io/badge/Backend%20Coverage-26.8%25-7AB893?style=flat-square" />
   <img alt="Frontend Coverage" src="https://img.shields.io/badge/Frontend%20Coverage-32.82%25-6FA7C7?style=flat-square" />
@@ -57,6 +57,8 @@ When reporting bugs or requesting features, use the provided GitHub templates fo
 - Outbound SMS/WhatsApp webhook channels with acknowledgement tracking.
 - Patient timeline and operational KPIs (SLA, waits, consultations/hour).
 - Bed assignment dropdown enriched with patient tags (type, triage, status).
+- Bedside patient workflow controls directly from bed cards: imaging, waiting results, discharge ready.
+- Keyboard bedside workflow shortcuts on selected bed: I (imaging), B (bilan/waiting results), S (discharge ready).
 - Extended patient categories including urgences differees.
 
 ## Quick Start

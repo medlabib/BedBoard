@@ -196,6 +196,7 @@ func TestHandleUIConfigPersistsPatientViewIdentityMode(t *testing.T) {
 		"logoDataUrl":             "",
 		"locale":                  "en",
 		"patientViewIdentityMode": "number",
+		"patientCallLanguage":     "ar",
 		"clearLogo":               false,
 	}))
 	postReq.Header.Set("Content-Type", "application/json")
@@ -218,5 +219,8 @@ func TestHandleUIConfigPersistsPatientViewIdentityMode(t *testing.T) {
 	}
 	if view.PatientViewIdentityMode != "number" {
 		t.Fatalf("expected patientViewIdentityMode=number, got %q", view.PatientViewIdentityMode)
+	}
+	if view.PatientCallLanguage != "ar" {
+		t.Fatalf("expected patientCallLanguage=ar, got %q", view.PatientCallLanguage)
 	}
 }

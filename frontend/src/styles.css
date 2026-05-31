@@ -754,6 +754,10 @@ select:focus {
 .card.status-occupé { box-shadow: 0 10px 26px rgba(127, 167, 212, 0.12); }
 .card.status-nettoyage { box-shadow: 0 10px 26px rgba(165, 138, 201, 0.12); }
 .card.status-alerte { box-shadow: 0 10px 26px rgba(217, 122, 112, 0.12); }
+.card.selected {
+  border-color: rgba(68, 53, 38, 0.38);
+  box-shadow: 0 0 0 2px rgba(68, 53, 38, 0.14), 0 14px 30px rgba(68, 53, 38, 0.16);
+}
 
 .card-head {
   display: flex;
@@ -823,6 +827,10 @@ select:focus {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+}
+
+.patient-workflow-actions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .status-btn,

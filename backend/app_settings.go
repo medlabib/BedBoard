@@ -31,6 +31,7 @@ const (
 	settingUIBrandLogo                    = "ui.brand_logo_data_url"
 	settingUILocale                       = "ui.locale"
 	settingUIPatientViewIdentityMode      = "ui.patient_view_identity_mode"
+	settingUIPatientCallLanguage          = "ui.patient_call_language"
 	settingAdminInitUsername              = "security.admin_init_username"
 	settingAdminInitPassword              = "security.admin_init_password"
 	settingForceSecureCookie              = "security.force_secure_cookie"
@@ -106,6 +107,7 @@ type uiConfigView struct {
 	LogoDataURL             string `json:"logoDataUrl"`
 	Locale                  string `json:"locale"`
 	PatientViewIdentityMode string `json:"patientViewIdentityMode"`
+	PatientCallLanguage     string `json:"patientCallLanguage"`
 }
 
 type uiConfigRequest struct {
@@ -113,6 +115,7 @@ type uiConfigRequest struct {
 	LogoDataURL             string `json:"logoDataUrl"`
 	Locale                  string `json:"locale"`
 	PatientViewIdentityMode string `json:"patientViewIdentityMode"`
+	PatientCallLanguage     string `json:"patientCallLanguage"`
 	ClearLogo               bool   `json:"clearLogo"`
 }
 
@@ -179,6 +182,19 @@ func normalizeUIPatientViewIdentityMode(value string) string {
 		return "number"
 	default:
 		return "name"
+	}
+}
+
+func normalizeUIPatientCallLanguage(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "ar":
+		return "ar"
+	case "fr":
+		return "fr"
+	case "en":
+		return "en"
+	default:
+		return "both"
 	}
 }
 
@@ -1131,11 +1147,13 @@ func (a *App) getUIConfigView() uiConfigView {
 	logo := strings.TrimSpace(a.getSettingValue(settingUIBrandLogo))
 	locale := normalizeUILocale(a.getSettingValue(settingUILocale))
 	identityMode := normalizeUIPatientViewIdentityMode(a.getSettingValue(settingUIPatientViewIdentityMode))
+	callLanguage := normalizeUIPatientCallLanguage(a.getSettingValue(settingUIPatientCallLanguage))
 	return uiConfigView{
 		AppName:                 name,
 		LogoDataURL:             logo,
 		Locale:                  locale,
 		PatientViewIdentityMode: identityMode,
+		PatientCallLanguage:     callLanguage,
 	}
 }
 
@@ -1190,6 +1208,10 @@ func (a *App) handleUIConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := a.upsertSettingValue(settingUIPatientViewIdentityMode, normalizeUIPatientViewIdentityMode(req.PatientViewIdentityMode)); err != nil {
+			http.Error(w, "save failed", http.StatusInternalServerError)
+			return
+		}
+		if err := a.upsertSettingValue(settingUIPatientCallLanguage, normalizeUIPatientCallLanguage(req.PatientCallLanguage)); err != nil {
 			http.Error(w, "save failed", http.StatusInternalServerError)
 			return
 		}
